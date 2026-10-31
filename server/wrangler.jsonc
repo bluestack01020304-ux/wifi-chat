@@ -1,0 +1,9 @@
+{
+  "name": "wifi-chat-signal",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-10-23",
+  "durable_objects": {
+    "bindings": [{ "name": "ROOMS", "class_name": "Room" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["Room"] }]
+}
