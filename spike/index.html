@@ -1,0 +1,420 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Wi-Fi Chat Spike</title>
+<!--
+  버리는 실험(스파이크) 파일. 설계 문서 docs/designs/wifi-chat.md 의 Next Steps 1번.
+  확인할 것:
+    1) iceServers: [] (STUN/TURN 없음) 로 같은 Wi-Fi 기기끼리 직접 연결이 되는가 (mDNS host 후보)
+    2) 선택된 후보 쌍이 host / 사설 prflx 인가 (srflx, relay 0건)
+    3) 폰 화면을 끄거나 탭을 백그라운드로 보내면 연결이 얼마나 끊기는가
+  중개 서버 없음. 연결 정보(SDP)는 복사-붙여넣기로 직접 주고받는다.
+-->
+<style>
+  :root { --fg:#1d1d1f; --muted:#6b6b70; --line:#d6d6db; --bg:#fafafa; --card:#fff; --ok:#1a7f37; --bad:#c62828; --warn:#a15c00; --accent:#2457d6; }
+  @media (prefers-color-scheme: dark) { :root { --fg:#ececf0; --muted:#9a9aa2; --line:#3a3a40; --bg:#151517; --card:#1f1f22; --ok:#4ccf6e; --bad:#ff6b6b; --warn:#f0b04a; --accent:#7aa2ff; } }
+  * { box-sizing: border-box; }
+  body { margin:0; padding:16px; font-family: system-ui, -apple-system, "Segoe UI", sans-serif; background:var(--bg); color:var(--fg); line-height:1.45; }
+  main { max-width: 640px; margin: 0 auto; display:flex; flex-direction:column; gap:14px; }
+  h1 { font-size:20px; margin:0; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:14px; }
+  .card h2 { font-size:15px; margin:0 0 8px; }
+  .muted { color:var(--muted); font-size:13px; }
+  .row { display:flex; gap:8px; flex-wrap:wrap; }
+  button { font:inherit; padding:10px 14px; border-radius:10px; border:1px solid var(--line); background:var(--card); color:var(--fg); cursor:pointer; }
+  button.primary { background:var(--accent); border-color:var(--accent); color:#fff; }
+  button:disabled { opacity:.45; cursor:not-allowed; }
+  textarea { width:100%; min-height:90px; font:12px/1.3 ui-monospace, Consolas, monospace; padding:8px; border-radius:8px; border:1px solid var(--line); background:var(--bg); color:var(--fg); }
+  input[type=text] { flex:1; min-width:0; font:inherit; padding:10px; border-radius:10px; border:1px solid var(--line); background:var(--bg); color:var(--fg); }
+  .status { font-weight:600; }
+  .ok { color:var(--ok); } .bad { color:var(--bad); } .warn { color:var(--warn); }
+  #chat { height:160px; overflow:auto; border:1px solid var(--line); border-radius:8px; padding:8px; font-size:14px; background:var(--bg); }
+  #chat .me { text-align:right; }
+  #log { height:200px; overflow:auto; font:12px/1.35 ui-monospace, Consolas, monospace; white-space:pre-wrap; border:1px solid var(--line); border-radius:8px; padding:8px; background:var(--bg); }
+  dl { display:grid; grid-template-columns: max-content 1fr; gap:4px 12px; margin:0; font-size:13px; }
+  dt { color:var(--muted); } dd { margin:0; word-break:break-all; }
+  .hidden { display:none; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Wi-Fi Chat 스파이크</h1>
+  <p class="muted">같은 Wi-Fi의 두 기기에서 이 페이지를 엽니다. 한쪽이 A(먼저 시작), 다른 쪽이 B(응답)입니다. 연결 정보는 메신저 "나에게 보내기" 등으로 복사해서 옮기세요. STUN/TURN을 쓰지 않으므로 같은 네트워크 안의 직접 연결만 성공합니다.</p>
+
+  <section class="card">
+    <h2>상태</h2>
+    <dl>
+      <dt>역할</dt><dd id="s-role">아직 선택 안 함</dd>
+      <dt>연결</dt><dd id="s-conn" class="status">-</dd>
+      <dt>선택된 경로</dt><dd id="s-pair">-</dd>
+      <dt>경로 판정</dt><dd id="s-verdict">-</dd>
+      <dt>왕복 지연</dt><dd id="s-rtt">-</dd>
+      <dt>최대 신호 간격</dt><dd id="s-gap">-</dd>
+    </dl>
+  </section>
+
+  <!-- 1단계: 역할 선택 -->
+  <section class="card" id="step-role">
+    <h2>1. 역할 고르기 (두 기기가 서로 달라야 해요)</h2>
+    <div class="row">
+      <button id="btn-a">A: 연결 시작 (첫 번째 기기)</button>
+      <button id="btn-b">B: 연결 정보 받기 (두 번째 기기)</button>
+    </div>
+    <p class="muted">한 기기는 A, 다른 기기는 B. 주소 끝에 <code>?role=a</code> 또는 <code>?role=b</code>를 붙이면 자동으로 골라집니다.</p>
+  </section>
+
+  <!-- A: 오퍼 표시 → 답장 붙여넣기 -->
+  <section class="card hidden" id="step-a">
+    <h2>2A. 이 코드를 B에게 보내기</h2>
+    <p class="muted" id="a-wait">연결 정보 수집 중...</p>
+    <textarea id="a-offer" readonly></textarea>
+    <div class="row"><button id="a-copy" disabled>복사</button><button id="a-share" class="hidden">공유</button></div>
+    <h2 style="margin-top:12px">3A. B가 보낸 답장 붙여넣기</h2>
+    <textarea id="a-answer" placeholder="WCS1:... 로 시작하는 B의 답장"></textarea>
+    <div class="row"><button class="primary" id="a-connect">연결</button></div>
+  </section>
+
+  <!-- B: 오퍼 붙여넣기 → 답장 표시 -->
+  <section class="card hidden" id="step-b">
+    <h2>2B. A가 보낸 코드 붙여넣기</h2>
+    <textarea id="b-offer" placeholder="WCS1:... 로 시작하는 A의 코드"></textarea>
+    <div class="row"><button class="primary" id="b-make">답장 만들기</button></div>
+    <h2 style="margin-top:12px">3B. 이 답장을 A에게 보내기</h2>
+    <p class="muted" id="b-wait"></p>
+    <textarea id="b-answer" readonly></textarea>
+    <div class="row"><button id="b-copy" disabled>복사</button><button id="b-share" class="hidden">공유</button></div>
+  </section>
+
+  <section class="card">
+    <h2>채팅</h2>
+    <div id="chat"></div>
+    <div class="row" style="margin-top:8px">
+      <input type="text" id="msg" placeholder="메시지" disabled>
+      <button class="primary" id="send" disabled>보내기</button>
+    </div>
+  </section>
+
+  <section class="card">
+    <h2>기록</h2>
+    <p class="muted">화면 끄기 실험: 연결된 뒤 폰 화면을 끄고 10초 뒤에 켜세요. 반대편 기기의 "최대 신호 간격"과 기록을 확인합니다. 1초 안팎은 정상(1초마다 신호를 보냄)이고, 2초를 넘으면 끊김입니다.</p>
+    <div id="log"></div>
+    <div class="row" style="margin-top:8px"><button id="report">결과 복사</button></div>
+  </section>
+</main>
+
+<script>
+"use strict";
+const PREFIX = "WCS1:";
+const GATHER_TIMEOUT_MS = 4000;
+const PING_MS = 1000;
+const GAP_WARN_MS = 2000;
+const t0 = performance.now();
+const $ = (id) => document.getElementById(id);
+
+const state = {
+  role: null, pc: null, dc: null,
+  localCands: [], droppedRemote: 0,
+  connectStartedAt: null, openedAt: null,
+  pair: null, verdict: null,
+  lastPongAt: null, lastPingRecvAt: null, maxGapMs: 0, rtts: [],
+  events: [],
+};
+
+function ts() { return ((performance.now() - t0) / 1000).toFixed(1).padStart(6) + "s"; }
+function log(msg, cls) {
+  const line = `${ts()} ${msg}`;
+  state.events.push(line);
+  const el = document.createElement("div");
+  el.textContent = line;
+  if (cls) el.className = cls;
+  $("log").appendChild(el);
+  $("log").scrollTop = $("log").scrollHeight;
+}
+function setText(id, text, cls) { const el = $(id); el.textContent = text; el.className = (id === "s-conn" ? "status " : "") + (cls || ""); }
+
+const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+log(`기기: ${isMobile ? "모바일" : "데스크톱"} · ${navigator.userAgent}`);
+log(`보안 컨텍스트(HTTPS/localhost): ${window.isSecureContext}`);
+
+// ---- 코드 인코딩: SDP 전체를 base64로. 짧게 만드는 압축은 하지 않는다(스파이크는 정확성 우선). ----
+function encode(desc) { return PREFIX + btoa(JSON.stringify({ type: desc.type, sdp: desc.sdp })); }
+function decode(text) {
+  const s = text.trim().replace(/\s+/g, "");
+  if (!s.startsWith(PREFIX)) throw new Error("WCS1: 로 시작하는 코드가 아닙니다");
+  const obj = JSON.parse(atob(s.slice(PREFIX.length)));
+  if (!obj.type || !obj.sdp) throw new Error("코드 형식이 잘못됐습니다");
+  return obj;
+}
+
+// 받은 SDP에서 host가 아닌 후보 줄을 지운다 (설계 문서: srflx/relay 거부).
+function keepHostCandidatesOnly(sdp) {
+  const lines = sdp.split(/\r?\n/);
+  const kept = lines.filter((l) => {
+    if (!l.startsWith("a=candidate:")) return true;
+    if (/ typ host( |$)/.test(l)) return true;
+    state.droppedRemote++;
+    return false;
+  });
+  if (state.droppedRemote) log(`받은 코드에서 host가 아닌 후보 ${state.droppedRemote}개 제거`, "warn");
+  return kept.join("\r\n");
+}
+
+function describeCandidateLine(c) {
+  // "candidate:... 1 udp 2113937151 abcd-1234.local 54321 typ host ..."
+  const p = c.split(" ");
+  return `${p[2] || "?"} ${p[4] || "?"}:${p[5] || "?"} typ ${p[7] || "?"}`;
+}
+
+function newPeer() {
+  const pc = new RTCPeerConnection({ iceServers: [] });
+  pc.onicecandidate = (e) => {
+    if (e.candidate && e.candidate.candidate) {
+      state.localCands.push(e.candidate.candidate);
+      log(`내 후보: ${describeCandidateLine(e.candidate.candidate)}`);
+    }
+  };
+  pc.onicegatheringstatechange = () => log(`후보 수집: ${pc.iceGatheringState}`);
+  pc.oniceconnectionstatechange = () => log(`ICE: ${pc.iceConnectionState}`, pc.iceConnectionState === "failed" ? "bad" : "");
+  pc.onconnectionstatechange = () => {
+    const s = pc.connectionState;
+    log(`연결: ${s}`, s === "connected" ? "ok" : (s === "failed" || s === "disconnected") ? "bad" : "");
+    setText("s-conn", s, s === "connected" ? "ok" : (s === "failed" || s === "disconnected") ? "bad" : "");
+    if (s === "connected") inspectPath();
+    if (s === "failed") log("직접 연결 실패: 같은 Wi-Fi가 아니거나, 네트워크가 기기 간 연결을 막거나, mDNS 해석이 안 되는 환경일 수 있습니다.", "bad");
+  };
+  pc.ondatachannel = (e) => wireChannel(e.channel);
+  state.pc = pc;
+  return pc;
+}
+
+// 비 trickle: 후보 수집이 끝날 때까지(또는 타임아웃) 기다린 뒤 SDP를 한 번에 보낸다.
+function waitForGathering(pc) {
+  if (pc.iceGatheringState === "complete") return Promise.resolve(true);
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => { log(`후보 수집 ${GATHER_TIMEOUT_MS / 1000}초 타임아웃, 모인 것만 보냄`, "warn"); resolve(false); }, GATHER_TIMEOUT_MS);
+    pc.addEventListener("icegatheringstatechange", () => {
+      if (pc.iceGatheringState === "complete") { clearTimeout(timer); resolve(true); }
+    });
+  });
+}
+
+function isPrivateAddress(addr) {
+  if (!addr) return false;
+  if (/\.local$/i.test(addr)) return true; // mDNS 이름
+  if (/^10\./.test(addr) || /^192\.168\./.test(addr) || /^169\.254\./.test(addr)) return true;
+  const m = addr.match(/^172\.(\d+)\./); if (m && +m[1] >= 16 && +m[1] <= 31) return true;
+  const a = addr.toLowerCase();
+  if (a.startsWith("fe80:") || a.startsWith("fc") || a.startsWith("fd")) return true;
+  return false;
+}
+
+// 설계 문서의 경로 규칙: 로컬=host, 원격=host 또는 사설 주소의 prflx. srflx/relay/공인 prflx면 끊는다.
+async function inspectPath() {
+  const stats = await state.pc.getStats();
+  let pairId = null;
+  stats.forEach((r) => { if (r.type === "transport" && r.selectedCandidatePairId) pairId = r.selectedCandidatePairId; });
+  let pair = pairId ? stats.get(pairId) : null;
+  if (!pair) stats.forEach((r) => { if (!pair && r.type === "candidate-pair" && r.nominated && r.state === "succeeded") pair = r; });
+  if (!pair) { log("선택된 후보 쌍을 찾지 못함 (getStats)", "warn"); setText("s-verdict", "확인 불가", "warn"); return; }
+  const l = stats.get(pair.localCandidateId) || {};
+  const r = stats.get(pair.remoteCandidateId) || {};
+  const lAddr = l.address || l.ip, rAddr = r.address || r.ip;
+  state.pair = { local: `${l.candidateType} ${lAddr}:${l.port} ${l.protocol}`, remote: `${r.candidateType} ${rAddr}:${r.port} ${r.protocol}` };
+  setText("s-pair", `나 ${state.pair.local} ↔ 상대 ${state.pair.remote}`);
+  log(`선택된 경로: 나 ${state.pair.local} ↔ 상대 ${state.pair.remote}`);
+
+  const localOk = l.candidateType === "host";
+  // Chrome은 getStats()에서 후보 주소를 가리는 경우가 있다. 주소가 비어 있는 prflx는
+  // 사설인지 판단할 수 없으므로 끊지 않고 "확인 불가"로 기록한다(스파이크에서 빈도를 재는 게 목적).
+  if (localOk && r.candidateType === "prflx" && !rAddr) {
+    state.verdict = "확인 불가 (원격 prflx, 브라우저가 주소를 가림)";
+    setText("s-verdict", state.verdict, "warn");
+    log(`경로 판정: ${state.verdict}`, "warn");
+    return;
+  }
+  const remoteOk = r.candidateType === "host" || (r.candidateType === "prflx" && isPrivateAddress(rAddr));
+  if (localOk && remoteOk) {
+    state.verdict = r.candidateType === "prflx" ? "통과 (원격 사설 prflx)" : "통과 (host↔host)";
+    setText("s-verdict", state.verdict, "ok");
+    log(`경로 판정: ${state.verdict}`, "ok");
+  } else {
+    state.verdict = `거부 (로컬 ${l.candidateType}, 원격 ${r.candidateType} ${rAddr})`;
+    setText("s-verdict", state.verdict, "bad");
+    log(`경로 판정: ${state.verdict} → 연결을 끊습니다`, "bad");
+    state.pc.close();
+  }
+}
+
+function wireChannel(dc) {
+  state.dc = dc;
+  dc.onopen = () => {
+    state.openedAt = performance.now();
+    const took = state.connectStartedAt ? ((state.openedAt - state.connectStartedAt) / 1000).toFixed(2) + "초" : "?";
+    log(`채널 열림 (연결까지 ${took})`, "ok");
+    $("msg").disabled = false; $("send").disabled = false;
+    state.lastPongAt = state.lastPingRecvAt = performance.now();
+  };
+  dc.onclose = () => { log("채널 닫힘", "bad"); $("msg").disabled = true; $("send").disabled = true; };
+  dc.onmessage = (e) => {
+    let m; try { m = JSON.parse(e.data); } catch { return; }
+    const now = performance.now();
+    if (m.k === "ping") {
+      const gap = now - (state.lastPingRecvAt || now);
+      if (gap > GAP_WARN_MS) log(`상대 ping ${(gap / 1000).toFixed(1)}초 만에 다시 도착 (끊김 의심)`, "warn");
+      noteGap(gap);
+      state.lastPingRecvAt = now;
+      send({ k: "pong", t: m.t });
+    } else if (m.k === "pong") {
+      state.lastPongAt = now;
+      const rtt = now - m.t; state.rtts.push(rtt);
+      setText("s-rtt", `${rtt.toFixed(0)} ms (평균 ${(state.rtts.reduce((a, b) => a + b, 0) / state.rtts.length).toFixed(0)} ms)`);
+    } else if (m.k === "chat") {
+      addChat(m.text, false);
+    } else if (m.k === "note") {
+      log(`상대: ${m.text}`);
+    }
+  };
+}
+
+function noteGap(gap) {
+  if (gap > state.maxGapMs) { state.maxGapMs = gap; setText("s-gap", `${(gap / 1000).toFixed(1)}초`, gap > GAP_WARN_MS ? "warn" : ""); }
+}
+
+function send(obj) { if (state.dc && state.dc.readyState === "open") { state.dc.send(JSON.stringify(obj)); return true; } return false; }
+
+setInterval(() => {
+  if (!state.dc || state.dc.readyState !== "open") return;
+  send({ k: "ping", t: performance.now() });
+  // pong이 안 오면 내 쪽에서도 끊김을 기록한다.
+  const silent = performance.now() - (state.lastPongAt || performance.now());
+  if (silent > GAP_WARN_MS) noteGap(silent);
+}, PING_MS);
+
+document.addEventListener("visibilitychange", () => {
+  log(`이 탭: ${document.visibilityState === "hidden" ? "백그라운드/화면 꺼짐" : "다시 보임"}`, "warn");
+  send({ k: "note", text: `탭 ${document.visibilityState === "hidden" ? "숨김" : "보임"}` });
+});
+
+function addChat(text, mine) {
+  const el = document.createElement("div");
+  el.className = mine ? "me" : "";
+  el.textContent = (mine ? "나: " : "상대: ") + text;
+  $("chat").appendChild(el); $("chat").scrollTop = $("chat").scrollHeight;
+}
+
+async function copyText(text, btn) {
+  try { await navigator.clipboard.writeText(text); }
+  catch {
+    // HTTP(보안 컨텍스트 아님)에서는 clipboard API가 막혀 있어 예전 방식으로 복사한다.
+    const ta = document.createElement("textarea"); ta.value = text; document.body.appendChild(ta); ta.select();
+    document.execCommand("copy"); ta.remove();
+  }
+  const old = btn.textContent; btn.textContent = "복사됨"; setTimeout(() => (btn.textContent = old), 1200);
+}
+function enableShare(btn, getText) {
+  if (!navigator.share) return;
+  btn.classList.remove("hidden");
+  btn.onclick = () => navigator.share({ text: getText() }).catch(() => {});
+}
+
+function chooseRole(role) {
+  state.role = role;
+  setText("s-role", role === "A" ? "A (연결 시작)" : "B (응답)");
+  $("step-role").classList.add("hidden");
+  $(role === "A" ? "step-a" : "step-b").classList.remove("hidden");
+  log(`역할: ${role}`);
+}
+
+$("btn-a").onclick = async () => {
+  chooseRole("A");
+  const pc = newPeer();
+  wireChannel(pc.createDataChannel("chat", { ordered: true }));
+  await pc.setLocalDescription(await pc.createOffer());
+  await waitForGathering(pc);
+  const code = encode(pc.localDescription);
+  $("a-offer").value = code;
+  $("a-wait").textContent = `후보 ${state.localCands.length}개 · 코드 길이 ${code.length}자`;
+  if (!state.localCands.length) log("내 후보가 0개입니다. 이 기기는 로컬 연결을 시도할 수 없습니다.", "bad");
+  $("a-copy").disabled = false;
+  $("a-copy").onclick = () => copyText(code, $("a-copy"));
+  enableShare($("a-share"), () => code);
+};
+
+$("a-connect").onclick = async () => {
+  try {
+    const ans = decode($("a-answer").value);
+    if (ans.type !== "answer") throw new Error("B의 답장이 아니라 다른 코드입니다");
+    state.connectStartedAt = performance.now();
+    await state.pc.setRemoteDescription({ type: "answer", sdp: keepHostCandidatesOnly(ans.sdp) });
+    log("B의 답장 적용, 연결 시도 중");
+    $("a-connect").disabled = true;
+  } catch (e) { log(`답장 오류: ${e.message}`, "bad"); }
+};
+
+$("btn-b").onclick = () => chooseRole("B");
+
+// 주소로 역할을 고정할 수 있다: ...:8000/?role=a (노트북), ...:8000/?role=b (폰)
+const roleParam = new URLSearchParams(location.search).get("role");
+if (roleParam && roleParam.toLowerCase() === "a") $("btn-a").click();
+if (roleParam && roleParam.toLowerCase() === "b") $("btn-b").click();
+
+// A인데 상대에게서 받은 것이 A 코드(offer)이면, 두 기기 모두 A를 고른 것이다.
+$("a-answer").addEventListener("input", () => {
+  try {
+    if (decode($("a-answer").value).type === "offer") {
+      log("붙여넣은 것은 A의 코드입니다. 두 기기 모두 A를 골랐어요. 상대 기기는 페이지를 새로고침하고 B를 고르세요.", "bad");
+    }
+  } catch { /* 아직 입력 중 */ }
+});
+
+$("b-make").onclick = async () => {
+  try {
+    const offer = decode($("b-offer").value);
+    if (offer.type !== "offer") throw new Error("A의 코드가 아니라 다른 코드입니다");
+    const pc = newPeer();
+    state.connectStartedAt = performance.now();
+    await pc.setRemoteDescription({ type: "offer", sdp: keepHostCandidatesOnly(offer.sdp) });
+    await pc.setLocalDescription(await pc.createAnswer());
+    $("b-make").disabled = true;
+    $("b-wait").textContent = "연결 정보 수집 중...";
+    await waitForGathering(pc);
+    const code = encode(pc.localDescription);
+    $("b-answer").value = code;
+    $("b-wait").textContent = `후보 ${state.localCands.length}개 · 코드 길이 ${code.length}자. A가 붙여넣으면 연결됩니다.`;
+    $("b-copy").disabled = false;
+    $("b-copy").onclick = () => copyText(code, $("b-copy"));
+    enableShare($("b-share"), () => code);
+  } catch (e) { log(`코드 오류: ${e.message}`, "bad"); }
+};
+
+$("send").onclick = () => {
+  const text = $("msg").value.trim(); if (!text) return;
+  if (send({ k: "chat", text })) { addChat(text, true); $("msg").value = ""; }
+};
+$("msg").addEventListener("keydown", (e) => { if (e.key === "Enter" && !e.isComposing) $("send").click(); });
+
+$("report").onclick = () => {
+  const avg = state.rtts.length ? (state.rtts.reduce((a, b) => a + b, 0) / state.rtts.length).toFixed(0) + " ms" : "-";
+  const took = state.openedAt && state.connectStartedAt ? ((state.openedAt - state.connectStartedAt) / 1000).toFixed(2) + "초" : "연결 안 됨";
+  const report = [
+    "# Wi-Fi Chat 스파이크 결과",
+    `역할: ${state.role || "-"}`,
+    `기기: ${isMobile ? "모바일" : "데스크톱"} / ${navigator.userAgent}`,
+    `보안 컨텍스트: ${window.isSecureContext}`,
+    `최종 연결 상태: ${state.pc ? state.pc.connectionState : "-"}`,
+    `연결까지 걸린 시간: ${took}`,
+    `내 후보: ${state.localCands.map(describeCandidateLine).join(" | ") || "없음"}`,
+    `받은 코드에서 제거한 비-host 후보: ${state.droppedRemote}`,
+    `선택된 경로: ${state.pair ? `나 ${state.pair.local} ↔ 상대 ${state.pair.remote}` : "-"}`,
+    `경로 판정: ${state.verdict || "-"}`,
+    `평균 왕복 지연: ${avg}`,
+    `최대 끊김: ${(state.maxGapMs / 1000).toFixed(1)}초`,
+    "", "## 기록", ...state.events,
+  ].join("\n");
+  copyText(report, $("report"));
+};
+</script>
+</body>
+</html>
