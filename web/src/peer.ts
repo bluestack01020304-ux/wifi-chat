@@ -1,4 +1,5 @@
 import type { Sdp } from "../../server/src/protocol";
+import { candidateSummary, debug } from "./debug";
 import type { Dial } from "./joiner";
 import type { Links } from "./links";
 import { checkSelectedPair, type PairResult, type StatLike } from "./pairCheck";
@@ -19,6 +20,13 @@ export type OnConnected = (peerId: string, c: Connection) => void;
 /** No STUN, no TURN: the only candidates are local (host) ones. */
 export function newPeerConnection(): RTCPeerConnection {
   return new RTCPeerConnection({ iceServers: [] });
+}
+
+/** Logs ICE and connection state changes of `pc` to the on-screen debug log (`?debug=1`). */
+export function watch(pc: RTCPeerConnection, label: string): void {
+  if (!debug.enabled) return;
+  pc.addEventListener("iceconnectionstatechange", () => debug.log(`${label} ice=${pc.iceConnectionState}`));
+  pc.addEventListener("connectionstatechange", () => debug.log(`${label} conn=${pc.connectionState}`));
 }
 
 /** Non-trickle: wait until all candidates are in the local description, or give up after GATHER_TIMEOUT_MS. */
@@ -83,6 +91,8 @@ export function createDialer(sig: Signaling, links: Links<Connection>, onConnect
 
   const dial: Dial = async (hostId, signal) => {
     const pc = newPeerConnection();
+    const label = `→${hostId.slice(0, 4)}`;
+    watch(pc, label);
     const dc = pc.createDataChannel("control");
     const abort = () => {
       pendingAnswers.delete(hostId);
@@ -94,17 +104,21 @@ export function createDialer(sig: Signaling, links: Links<Connection>, onConnect
       await abortable(waitForGathering(pc), signal);
       const answer = new Promise<Sdp>((resolve) => pendingAnswers.set(hostId, resolve));
       sig.send({ t: "signal", to: hostId, sdp: { type: "offer", sdp: pc.localDescription!.sdp } });
+      debug.log(`${label} offer sent, mine: ${candidateSummary(pc.localDescription!.sdp)}`);
       const sdp = await abortable(answer, signal);
+      debug.log(`${label} answer, theirs: ${candidateSummary(sdp.sdp)}`);
       pendingAnswers.delete(hostId);
       await pc.setRemoteDescription(remoteDescription(sdp));
       await abortable(waitForOpen(pc, dc), signal);
       const path = await verifyPath(pc);
+      debug.log(`${label} path: ${path.ok ? `${path.verdict} (${path.local} ↔ ${path.remote})` : `REJECTED ${path.reason}`}`);
       if (!path.ok) throw new Error(path.reason);
       if (signal.aborted) throw new Error("aborted");
       signal.removeEventListener("abort", abort);
       const conn = register(links, hostId, pc, dc, path, true);
       if (links.get(hostId) === conn) onConnected(hostId, conn);
     } catch (e) {
+      debug.log(`${label} failed: ${e instanceof Error ? e.message : String(e)} (ice=${pc.iceConnectionState})`);
       abort();
       throw e;
     }

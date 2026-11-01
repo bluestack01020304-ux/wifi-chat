@@ -328,3 +328,15 @@ fieldset.radios legend {
   color: var(--muted);
   font-size: 13px;
 }
+
+.debug-log {
+  max-width: 32rem;
+  margin: 0 auto 24px;
+  padding: 8px 16px;
+  font-size: 11px;
+  line-height: 1.4;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--muted);
+  border-top: 1px dashed var(--soft-line);
+}

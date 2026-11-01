@@ -6,6 +6,7 @@ import { knownRoster, type Note, rosterNotes } from "./chat/notes";
 import { ChatSession } from "./chat/session";
 import type { RosterEntry } from "./chat/wire";
 import { detectDevice, signalUrl } from "./config";
+import { debug } from "./debug";
 import { createHost } from "./host";
 import { Joiner, type View } from "./joiner";
 import { Links } from "./links";
@@ -26,6 +27,8 @@ const HEARTBEAT_MS = 1000;
 
 const app = document.getElementById("app")!;
 const page = new URL(location.href);
+// `?debug=1`: show connection diagnostics on this screen (never sent anywhere).
+debug.enabled = page.searchParams.get("debug") === "1";
 const room = readRoom(page);
 // A room the server would refuse: say so instead of opening a socket that is rejected.
 if ("error" in room) showBadUrl(app, page.origin + page.pathname);
@@ -133,6 +136,13 @@ function boot(room: RoomInfo): void {
     othersInRoom = snapshot.peers.filter((p) => p.peerId !== myId).length;
   }
 
+  if (debug.enabled) {
+    const pre = document.createElement("pre");
+    pre.className = "debug-log";
+    document.body.append(pre);
+    debug.listeners.push(() => (pre.textContent = debug.lines.join("\n")));
+    debug.log(`${navigator.userAgent.replace(/^Mozilla\/5\.0 /, "")}`);
+  }
   history.onChange(() => render());
   session.onChange(() => {
     onRoster();
