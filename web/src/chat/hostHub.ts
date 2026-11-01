@@ -1,5 +1,5 @@
 import type { History } from "./history";
-import { type ChatMessage, parseToHost, type RosterEntry, type ToMember } from "./wire";
+import { type ChatMessage, historyFrame, parseToHost, type RosterEntry, type ToMember } from "./wire";
 
 /** Spec: a member whose link dropped stays "잠시 자리 비움" for 30 s. */
 export const AWAY_MS = 30_000;
@@ -70,13 +70,17 @@ export class HostHub {
     const frame = parseToHost(raw);
     if (!frame) return;
 
+    // hello and say share one budget: a repeated hello costs a full history and a roster broadcast.
+    if (!this.allow(m)) return;
     if (frame.t === "hello") {
+      const changed = m.nick !== frame.nick;
       m.nick = frame.nick;
-      this.sendTo(peerId, { t: "history", msgs: this.deps.history.list() });
-      this.rosterChanged();
+      this.deps.send(peerId, historyFrame(this.deps.history.list()));
+      if (changed) this.rosterChanged();
+      else this.sendTo(peerId, { t: "roster", people: this.roster() });
       return;
     }
-    if (m.nick === null || !this.allow(m)) return;
+    if (m.nick === null) return;
     this.relay({ id: frame.id, from: peerId, nick: m.nick, text: frame.text, at: this.deps.now() });
   }
 

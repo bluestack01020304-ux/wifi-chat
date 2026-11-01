@@ -1,5 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { History } from "../../src/chat/history";
+import { HELLO_RETRY_MS } from "../../src/chat/memberChat";
 import { type ChannelLike, ChatSession } from "../../src/chat/session";
 
 class FakeChannel implements ChannelLike {
@@ -111,6 +112,24 @@ describe("ChatSession", () => {
     a.say({ t: "say", id: "late", text: "to old host" });
     expect(a.sent).toHaveLength(before);
     expect(history.list().map((m) => m.text)).toEqual(["before merge"]);
+  });
+
+  it("a hello sent before the host attaches is retried until history arrives", () => {
+    vi.useFakeTimers();
+    try {
+      // Member side: its hello goes out before the host listens.
+      const m = setup();
+      const toHost = m.ch("h");
+      m.s.update(member("h"));
+      expect(toHost.sent).toEqual([{ t: "hello", nick: "나" }]);
+      vi.advanceTimersByTime(HELLO_RETRY_MS);
+      expect(toHost.sent).toHaveLength(2);
+      toHost.say({ t: "history", msgs: [] });
+      vi.advanceTimersByTime(HELLO_RETRY_MS * 3);
+      expect(toHost.sent).toHaveLength(2);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("canSend", () => {

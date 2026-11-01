@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { MAX_FRAME, MAX_HISTORY, parseToHost, parseToMember } from "../../src/chat/wire";
+import { historyFrame, MAX_FRAME, MAX_HISTORY, parseToHost, parseToMember } from "../../src/chat/wire";
 
 const msg = { id: "m1", from: "a", nick: "졸린 고양이", text: "hi", at: 5 };
 const j = (v: unknown) => JSON.stringify(v);
@@ -31,6 +31,24 @@ describe("parseToHost", () => {
     for (const raw of [5, new ArrayBuffer(2), "nope", "[]", "null", j({ t: "hack" }), j({ t: "say", text: "hi" }), j({ t: "say", id: "m", text: 5 }), j({ t: "say", id: "", text: "hi" })]) {
       expect(parseToHost(raw)).toBeNull();
     }
+  });
+});
+
+describe("historyFrame", () => {
+  it("a full history of maximum-length emoji still fits and parses", () => {
+    const msgs = Array.from({ length: MAX_HISTORY }, (_, i) => ({ ...msg, id: "m" + i, at: i, text: "😀".repeat(500) }));
+    const frame = historyFrame(msgs);
+    expect(new TextEncoder().encode(frame).length).toBeLessThanOrEqual(MAX_FRAME);
+    const parsed = parseToMember(frame);
+    expect(parsed).toMatchObject({ t: "history" });
+    const ids = (parsed as { msgs: { id: string }[] }).msgs.map((m) => m.id);
+    expect(ids.at(-1)).toBe("m99");
+    expect(ids.length).toBeGreaterThan(0);
+    expect(ids.length).toBeLessThan(MAX_HISTORY);
+  });
+
+  it("a small history is sent whole", () => {
+    expect(parseToMember(historyFrame([msg]))).toEqual({ t: "history", msgs: [msg] });
   });
 });
 

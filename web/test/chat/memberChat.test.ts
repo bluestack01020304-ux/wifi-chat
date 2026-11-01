@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { History } from "../../src/chat/history";
-import { MemberChat } from "../../src/chat/memberChat";
+import { HELLO_RETRY_MS, MemberChat } from "../../src/chat/memberChat";
 
 const j = (v: unknown) => JSON.stringify(v);
 const msg = (id: string, at: number) => ({ id, from: "h", nick: "n", text: id, at });
@@ -44,6 +44,27 @@ describe("MemberChat", () => {
     chat.onFrame(j({ t: "roster", people }));
     expect(chat.roster()).toEqual(people);
     expect(cb).toHaveBeenCalledOnce();
+  });
+
+  it("hello is retried until history arrives, and close stops it", () => {
+    vi.useFakeTimers();
+    try {
+      const { chat, sent } = setup();
+      chat.open();
+      vi.advanceTimersByTime(HELLO_RETRY_MS * 2);
+      expect(sent).toHaveLength(3);
+      chat.onFrame(j({ t: "history", msgs: [] }));
+      vi.advanceTimersByTime(HELLO_RETRY_MS * 2);
+      expect(sent).toHaveLength(3);
+
+      const other = setup();
+      other.chat.open();
+      other.chat.close();
+      vi.advanceTimersByTime(HELLO_RETRY_MS * 2);
+      expect(other.sent).toHaveLength(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("malformed frames are ignored", () => {

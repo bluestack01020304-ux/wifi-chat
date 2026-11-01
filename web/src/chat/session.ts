@@ -136,6 +136,7 @@ export class ChatSession {
     });
     ch.addEventListener("close", () => {
       if (this.member !== entry) return;
+      chat.close();
       this.member = null;
       this.changed();
     });
@@ -153,6 +154,7 @@ export class ChatSession {
 
   private dropMember(): void {
     if (!this.member) return;
+    this.member.chat.close();
     this.member = null;
     this.changed();
   }

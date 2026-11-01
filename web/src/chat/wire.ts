@@ -86,6 +86,21 @@ function all<T>(v: unknown, max: number, item: (x: unknown) => T | null): T[] | 
   return out;
 }
 
+/**
+ * The history frame for a newcomer: the newest messages whose JSON fits in
+ * MAX_FRAME UTF-8 bytes. The receiver checks UTF-16 length, which is never
+ * larger than the UTF-8 byte count, so a frame built here always passes.
+ */
+export function historyFrame(msgs: ChatMessage[]): string {
+  const encoder = new TextEncoder();
+  let start = 0;
+  for (;;) {
+    const frame = JSON.stringify({ t: "history", msgs: msgs.slice(start) } satisfies ToMember);
+    if (encoder.encode(frame).length <= MAX_FRAME || start >= msgs.length) return frame;
+    start++;
+  }
+}
+
 export function parseToHost(raw: unknown): ToHost | null {
   const v = decode(raw);
   if (!v) return null;

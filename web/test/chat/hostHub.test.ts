@@ -85,14 +85,25 @@ describe("HostHub", () => {
     const { hub, join, said } = setup();
     join("a");
     join("b");
+    // hello and say share one budget per window, so a's hello already used one slot.
     for (let i = 0; i < SAY_LIMIT + 5; i++) hub.onFrame("a", j({ t: "say", id: "a" + i, text: "x" }));
-    expect(said("msg").filter(([to]) => to === "b")).toHaveLength(SAY_LIMIT);
+    expect(said("msg").filter(([to]) => to === "b")).toHaveLength(SAY_LIMIT - 1);
     hub.onFrame("b", j({ t: "say", id: "b1", text: "y" }));
-    expect(said("msg").filter(([to]) => to === "a")).toHaveLength(SAY_LIMIT + 1);
+    expect(said("msg").filter(([to]) => to === "a")).toHaveLength(SAY_LIMIT);
     vi.advanceTimersByTime(SAY_WINDOW_MS);
     hub.onFrame("a", j({ t: "say", id: "late", text: "z" }));
-    // b got a's 20, its own b1, and now a's late message.
-    expect(said("msg").filter(([to]) => to === "b")).toHaveLength(SAY_LIMIT + 2);
+    // b got a's 19, its own b1, and now a's late message.
+    expect(said("msg").filter(([to]) => to === "b")).toHaveLength(SAY_LIMIT + 1);
+  });
+
+  it("repeated hello is rate-limited", () => {
+    const { hub, join, out } = setup();
+    join("a");
+    join("b");
+    out.length = 0;
+    for (let i = 0; i < SAY_LIMIT * 5; i++) hub.onFrame("b", j({ t: "hello", nick: "b" + i }));
+    expect(out.filter(([to, f]) => to === "b" && f.t === "history").length).toBeLessThanOrEqual(SAY_LIMIT);
+    expect(out.filter(([to, f]) => to === "a" && f.t === "roster").length).toBeLessThanOrEqual(SAY_LIMIT);
   });
 
   it("detach marks away then removes after 30 s", () => {
