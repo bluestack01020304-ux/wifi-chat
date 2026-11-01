@@ -337,3 +337,8 @@ issues verified: 2 of 2
 
 Verification is deterministic: a fix counts when its `applied_text` is in the current design and absent from the round-3 snapshot. It confirms applied edits, never a review verdict; no reviewer was launched past the cap.
 <!-- gstack:office-hours:concerns:end -->
+
+## Rooms and UI Results (Next Steps 6)
+- 2026-11-01 실서버 배포(서버 다음 웹, 연달아). 방 주소 규칙 변경: `key`(링크 전용)와 `anon=1`(익명)을 따로 고른다. `mode`는 더 이상 읽지 않는다.
+- 배포본 headless Chrome(390px): 입장 화면(사람 수, 닉네임과 다시, 들어가기), 방 머리글과 칩(`외부 전송 없음`, `링크로만`, `익명`), 아바타와 점선 호스트 태그, 말풍선, 입장·승계 시스템 줄, `<b>x</b>`와 `<script>` 방 이름은 글자 그대로, 41자 방 이름 거부, 링크 전용+익명 링크(22자 key)와 QR, 익명 방에서 다른 탭에 닉네임 없음, 호스트 교체 중 입력 중인 글과 포커스 유지, `?key=bad`·`?anon=0`은 "이 방 주소가 올바르지 않아요", 가로 스크롤 없음.
+- 노트북에서 만든 링크 전용 QR을 폰으로 찍어 같은 방에 들어가기: (기기 확인 후 기록)
