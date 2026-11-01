@@ -9,6 +9,7 @@ import type { RoomSnapshot } from "../../server/src/protocol";
 import { Links } from "./links";
 import { linksToClose } from "./merge";
 import { createDialer, type Connection } from "./peer";
+import { readRoom } from "./roomLink";
 import { Signaling } from "./signaling";
 import { createChatView, el } from "./ui";
 
@@ -106,8 +107,10 @@ setInterval(() => {
 // Chat: nickname and history live in memory only (closing every tab ends the conversation).
 const myNick = makeNickname(Math.random);
 const history = new History();
+const roomInfo = readRoom(page);
 const session = new ChatSession({
   myNick,
+  mode: "error" in roomInfo ? "family" : roomInfo.mode,
   history,
   channel: (peerId) => links.get(peerId)?.dc,
   myId: () => myId,

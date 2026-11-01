@@ -1,3 +1,4 @@
+import type { Mode } from "../../../server/src/roomKey";
 import type { View } from "../joiner";
 import type { History } from "./history";
 import { HostHub } from "./hostHub";
@@ -13,6 +14,7 @@ export interface ChannelLike {
 
 export interface ChatSessionDeps {
   myNick: string;
+  mode: Mode;
   history: History;
   channel(peerId: string): ChannelLike | undefined;
   myId(): string;
@@ -34,8 +36,17 @@ export class ChatSession {
   private attached = new Map<string, ChannelLike>();
   private member: { chat: MemberChat; hostId: string; term: number; channel: ChannelLike } | null = null;
   private listeners: (() => void)[] = [];
+  /** The last roster my host sent me, to seed my names if I take the group over. */
+  private lastRoster: RosterEntry[] = [];
 
   constructor(private deps: ChatSessionDeps) {}
+
+  /** A re-rolled nickname (family): the host renames me, or I rename myself as host. */
+  setNick(nick: string): void {
+    this.deps.myNick = nick;
+    this.hub?.setMyNick(nick);
+    this.member?.chat.setNick(nick);
+  }
 
   update(view: View): void {
     if (view.kind === "host") {
@@ -80,6 +91,8 @@ export class ChatSession {
         myNick: this.deps.myNick,
         history: this.deps.history,
         term,
+        mode: this.deps.mode,
+        seed: this.lastRoster,
         now: this.deps.now,
         newId: this.deps.newId,
         send: (peerId, frame) => {
@@ -129,6 +142,7 @@ export class ChatSession {
       myNick: this.deps.myNick,
       history: this.deps.history,
       term,
+      mode: this.deps.mode,
       newId: this.deps.newId,
       send: (frame) => {
         if (this.member?.chat === chat && isOpen(ch)) ch.send(frame);
@@ -136,7 +150,10 @@ export class ChatSession {
     });
     const entry = { chat, hostId, term, channel: ch };
     this.member = entry;
-    chat.onRoster(() => this.changed());
+    chat.onRoster(() => {
+      this.lastRoster = chat.roster();
+      this.changed();
+    });
     ch.addEventListener("message", (e) => {
       if (this.member === entry) chat.onFrame(e.data);
     });

@@ -5,11 +5,11 @@ import { HELLO_RETRY_MS, MemberChat } from "../../src/chat/memberChat";
 const j = (v: unknown) => JSON.stringify(v);
 const msg = (id: string, at: number) => ({ id, from: "h", nick: "n", text: id, at });
 
-function setup(term = 1) {
+function setup(term = 1, mode: "family" | "meeting" = "family") {
   const history = new History();
   const sent: unknown[] = [];
   let n = 0;
-  const chat = new MemberChat({ myNick: "졸린 펭귄", history, term, send: (f) => sent.push(JSON.parse(f)), newId: () => "id" + ++n });
+  const chat = new MemberChat({ myNick: "졸린 펭귄", history, term, mode, send: (f) => sent.push(JSON.parse(f)), newId: () => "id" + ++n });
   return { chat, history, sent };
 }
 
@@ -83,5 +83,29 @@ describe("MemberChat term", () => {
     chat.onFrame(j({ t: "msg", msg: msg("new", 2), term: 2 }));
     expect(history.list().map((m) => m.id)).toEqual(["new"]);
     expect(chat.roster()).toEqual([]);
+  });
+});
+
+describe("MemberChat naming", () => {
+  it("meeting hello carries no nickname", () => {
+    const { chat, sent } = setup(1, "meeting");
+    chat.open();
+    chat.close();
+    expect(sent).toEqual([{ t: "hello", nick: "익명" }]);
+    expect(JSON.stringify(sent)).not.toContain("졸린 펭귄");
+  });
+
+  it("re-roll re-sends hello with the new nick", () => {
+    const { chat, sent } = setup();
+    chat.open();
+    chat.close();
+    chat.setNick("배고픈 수달");
+    expect(sent).toEqual([{ t: "hello", nick: "졸린 펭귄" }, { t: "hello", nick: "배고픈 수달" }]);
+  });
+
+  it("re-roll sends nothing in meeting mode", () => {
+    const { chat, sent } = setup(1, "meeting");
+    chat.setNick("배고픈 수달");
+    expect(sent).toEqual([]);
   });
 });

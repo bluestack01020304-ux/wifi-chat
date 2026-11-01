@@ -28,6 +28,7 @@ function setup() {
   let n = 0;
   const s = new ChatSession({
     myNick: "나",
+    mode: "family",
     history,
     channel: (id) => channels.get(id),
     myId: () => "me",
@@ -152,7 +153,7 @@ describe("ChatSession", () => {
 describe("ChatSession term", () => {
   it("a new term for the same host replaces the member role", () => {
     const channels = new Map<string, FakeChannel>();
-    const s = new ChatSession({ myNick: "나", history: new History(), channel: (id) => channels.get(id), myId: () => "me", now: () => 1, newId: () => "x" });
+    const s = new ChatSession({ myNick: "나", mode: "family", history: new History(), channel: (id) => channels.get(id), myId: () => "me", now: () => 1, newId: () => "x" });
     const h = new FakeChannel();
     channels.set("h", h);
     s.update({ kind: "member", groupId: "g", hostId: "h", term: 1 });
@@ -166,12 +167,45 @@ describe("ChatSession term", () => {
 
   it("a host whose term changes stamps the new term", () => {
     const channels = new Map<string, FakeChannel>();
-    const s = new ChatSession({ myNick: "나", history: new History(), channel: (id) => channels.get(id), myId: () => "me", now: () => 1, newId: () => "x" });
+    const s = new ChatSession({ myNick: "나", mode: "family", history: new History(), channel: (id) => channels.get(id), myId: () => "me", now: () => 1, newId: () => "x" });
     const a = new FakeChannel();
     channels.set("a", a);
     s.update({ kind: "host", groupId: "g", members: ["a"], aloneInRoom: false, term: 1 });
     s.update({ kind: "host", groupId: "g", members: ["a"], aloneInRoom: false, term: 2 });
     a.say({ t: "hello", nick: "에이" });
     expect(a.sent.map((f) => f.term)).toEqual([2, 2]);
+  });
+});
+
+describe("ChatSession naming", () => {
+  it("member to host seeds the hub with the last roster", () => {
+    const channels = new Map<string, FakeChannel>();
+    const s = new ChatSession({ myNick: "나", mode: "meeting", history: new History(), channel: (id) => channels.get(id), myId: () => "me", now: () => 1, newId: () => "x" });
+    const h = new FakeChannel();
+    channels.set("h", h);
+    s.update({ kind: "member", groupId: "g", hostId: "h", term: 1 });
+    expect(h.sent[0]).toEqual({ t: "hello", nick: "익명" });
+    h.say({
+      t: "roster",
+      term: 1,
+      people: [
+        { peerId: "h", nick: "익명 1", host: true, away: false },
+        { peerId: "me", nick: "익명 2", host: false, away: false },
+        { peerId: "x", nick: "익명 3", host: false, away: false },
+      ],
+    });
+    const x = new FakeChannel();
+    channels.set("x", x);
+    s.update({ kind: "host", groupId: "g", members: ["x"], aloneInRoom: false, term: 2 });
+    x.say({ t: "hello", nick: "익명" });
+    expect(s.roster().map((p) => p.nick)).toEqual(["익명 2", "익명 3"]);
+  });
+
+  it("setNick reaches the current role", () => {
+    const channels = new Map<string, FakeChannel>();
+    const s = new ChatSession({ myNick: "나", mode: "family", history: new History(), channel: (id) => channels.get(id), myId: () => "me", now: () => 1, newId: () => "x" });
+    s.update({ kind: "host", groupId: "g", members: [], aloneInRoom: true, term: 1 });
+    s.setNick("새 이름");
+    expect(s.roster()[0].nick).toBe("새 이름");
   });
 });

@@ -1,3 +1,4 @@
+import type { Mode } from "../../../server/src/roomKey";
 import type { History } from "./history";
 import { type ChatMessage, historyFrame, MAX_NICK, parseToHost, type RosterEntry, type ToMember } from "./wire";
 
@@ -5,6 +6,10 @@ import { type ChatMessage, historyFrame, MAX_NICK, parseToHost, type RosterEntry
 export const AWAY_MS = 30_000;
 export const SAY_LIMIT = 20;
 export const SAY_WINDOW_MS = 10_000;
+
+/** Spec 신뢰 모델: in a meeting room everyone is shown as "익명 N", fixed while they stay. */
+export const anonName = (n: number) => `익명 ${n}`;
+const anonNumber = (nick: string) => Number(/^익명 (\d+)$/.exec(nick)?.[1] ?? 0);
 
 interface Member {
   nick: string | null; // the shown nickname, numbered if taken; null until hello
@@ -21,6 +26,10 @@ export interface HostHubDeps {
   history: History;
   /** The group's current term, stamped on every frame. */
   term: number;
+  /** meeting: everyone is "익명 N" and hello nicknames are ignored. */
+  mode: Mode;
+  /** The last roster I saw as a member: names carry over when I take the group over. */
+  seed?: RosterEntry[];
   send(peerId: string, frame: string): void;
   now(): number;
   newId?(): string;
@@ -34,8 +43,32 @@ export class HostHub {
   private members = new Map<string, Member>();
   private listeners: (() => void)[] = [];
   private closed = false;
+  /** My shown name. */
+  private myName: string;
+  /** Names from the seed, reserved for those peers until they say hello. */
+  private seeded = new Map<string, string>();
+  /** Next "익명 N" number; numbers are never reused while this group lives. */
+  private nextAnon = 0;
 
-  constructor(private deps: HostHubDeps) {}
+  constructor(private deps: HostHubDeps) {
+    const seed = deps.seed ?? [];
+    const mine = seed.find((p) => p.peerId === deps.myId)?.nick;
+    // The previous host is gone (or rejoins under a fresh name), so its name is not reserved.
+    for (const p of seed) if (p.peerId !== deps.myId && !p.host) this.seeded.set(p.peerId, p.nick);
+    if (deps.mode === "meeting") {
+      this.myName = mine && anonNumber(mine) > 0 ? mine : anonName(1);
+      this.nextAnon = Math.max(anonNumber(this.myName), ...seed.map((p) => anonNumber(p.nick))) + 1;
+    } else {
+      this.myName = mine ?? deps.myNick;
+    }
+  }
+
+  /** A new nickname for me (family only). */
+  setMyNick(nick: string): void {
+    if (this.closed || this.deps.mode === "meeting") return;
+    this.myName = this.uniqueNick(this.deps.myId, nick);
+    this.rosterChanged();
+  }
 
   attach(peerId: string): void {
     if (this.closed) return;
@@ -76,10 +109,17 @@ export class HostHub {
     // hello and say share one budget: a repeated hello costs a full history and a roster broadcast.
     if (!this.allow(m)) return;
     if (frame.t === "hello") {
-      const changed = m.asked !== frame.nick;
-      if (changed) {
+      let changed = false;
+      if (this.deps.mode === "meeting") {
+        if (m.nick === null) {
+          m.nick = this.claimSeed(peerId) ?? anonName(this.nextAnon++);
+          changed = true;
+        }
+      } else if (m.asked !== frame.nick) {
+        const first = m.asked === null;
         m.asked = frame.nick;
-        m.nick = this.uniqueNick(peerId, frame.nick);
+        m.nick = (first ? this.claimSeed(peerId) : null) ?? this.uniqueNick(peerId, frame.nick);
+        changed = true;
       }
       this.deps.send(peerId, historyFrame(this.deps.history.list(), this.deps.term));
       if (changed) this.rosterChanged();
@@ -94,11 +134,11 @@ export class HostHub {
   say(text: string): void {
     if (this.closed || !text) return;
     const id = this.deps.newId?.() ?? crypto.randomUUID();
-    this.relay({ id, from: this.deps.myId, nick: this.deps.myNick, text, at: this.deps.now() });
+    this.relay({ id, from: this.deps.myId, nick: this.myName, text, at: this.deps.now() });
   }
 
   roster(): RosterEntry[] {
-    const people: RosterEntry[] = [{ peerId: this.deps.myId, nick: this.deps.myNick, host: true, away: false }];
+    const people: RosterEntry[] = [{ peerId: this.deps.myId, nick: this.myName, host: true, away: false }];
     for (const [peerId, m] of this.members) {
       if (m.nick !== null) people.push({ peerId, nick: m.nick, host: false, away: m.away });
     }
@@ -115,10 +155,25 @@ export class HostHub {
     this.members.clear();
   }
 
+  /** The seeded name for `peerId`, if it has one that nobody else shows now. */
+  private claimSeed(peerId: string): string | null {
+    const name = this.seeded.get(peerId);
+    this.seeded.delete(peerId);
+    if (name === undefined || this.taken(peerId).has(name)) return null;
+    return name;
+  }
+
+  /** Names shown by everyone but `peerId`, plus names reserved for seeded peers. */
+  private taken(peerId: string): Set<string> {
+    const taken = new Set<string>(this.seeded.values());
+    if (peerId !== this.deps.myId) taken.add(this.myName);
+    for (const [id, other] of this.members) if (id !== peerId && other.nick !== null) taken.add(other.nick);
+    return taken;
+  }
+
   /** `asked`, or `asked` with " 2", " 3"… when the host or another member already shows it. */
   private uniqueNick(peerId: string, asked: string): string {
-    const taken = new Set([this.deps.myNick]);
-    for (const [id, other] of this.members) if (id !== peerId && other.nick !== null) taken.add(other.nick);
+    const taken = this.taken(peerId);
     if (!taken.has(asked)) return asked;
     for (let n = 2; ; n++) {
       const suffix = ` ${n}`;

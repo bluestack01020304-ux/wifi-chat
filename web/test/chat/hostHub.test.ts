@@ -1,13 +1,14 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { History } from "../../src/chat/history";
 import { AWAY_MS, HostHub, SAY_LIMIT, SAY_WINDOW_MS } from "../../src/chat/hostHub";
+import type { RosterEntry } from "../../src/chat/wire";
 
 const j = (v: unknown) => JSON.stringify(v);
 
-function setup(term = 1) {
+function setup(term = 1, mode: "family" | "meeting" = "family", seed?: RosterEntry[], myId = "h") {
   const history = new History();
   const out: [string, { t: string; [k: string]: unknown }][] = [];
-  const hub = new HostHub({ myId: "h", myNick: "호스트 고양이", history, term, send: (to, frame) => out.push([to, JSON.parse(frame)]), now: () => Date.now() });
+  const hub = new HostHub({ myId, myNick: "호스트 고양이", history, term, mode, seed, send: (to, frame) => out.push([to, JSON.parse(frame)]), now: () => Date.now() });
   const join = (id: string, nick = "닉" + id) => {
     hub.attach(id);
     hub.onFrame(id, j({ t: "hello", nick }));
@@ -194,5 +195,84 @@ describe("HostHub term", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe("HostHub naming", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(1000);
+  });
+  afterEach(() => vi.useRealTimers());
+
+  it("meeting roster and messages show only 익명 N", () => {
+    const { hub, join, out, said } = setup(1, "meeting");
+    join("a", "졸린 거북이");
+    join("b", "배고픈 펭귄");
+    expect(hub.roster().map((p) => p.nick)).toEqual(["익명 1", "익명 2", "익명 3"]);
+    hub.onFrame("a", JSON.stringify({ t: "say", id: "m1", text: "hi" }));
+    hub.say("from host");
+    expect(said("msg").map(([, f]) => (f.msg as { nick: string }).nick)).toContain("익명 2");
+    expect(said("msg").map(([, f]) => (f.msg as { nick: string }).nick)).toContain("익명 1");
+    const everything = JSON.stringify(out);
+    for (const real of ["졸린 거북이", "배고픈 펭귄", "호스트 고양이"]) expect(everything).not.toContain(real);
+  });
+
+  it("numbers are not reused", () => {
+    const { hub, join } = setup(1, "meeting");
+    join("a");
+    join("b");
+    hub.detach("b");
+    vi.advanceTimersByTime(AWAY_MS);
+    join("c");
+    expect(hub.roster().map((p) => p.nick)).toEqual(["익명 1", "익명 2", "익명 4"]);
+  });
+
+  it("a meeting member keeps its number when it says hello again", () => {
+    const { hub, join } = setup(1, "meeting");
+    join("a");
+    hub.onFrame("a", JSON.stringify({ t: "hello", nick: "익명" }));
+    expect(hub.roster().map((p) => p.nick)).toEqual(["익명 1", "익명 2"]);
+  });
+
+  it("a new host keeps the names it last saw (meeting)", () => {
+    const seed: RosterEntry[] = [
+      { peerId: "old", nick: "익명 1", host: true, away: false },
+      { peerId: "me", nick: "익명 2", host: false, away: false },
+      { peerId: "x", nick: "익명 3", host: false, away: false },
+    ];
+    const { hub, join } = setup(2, "meeting", seed, "me");
+    expect(hub.roster()).toEqual([{ peerId: "me", nick: "익명 2", host: true, away: false }]);
+    join("new");
+    join("x");
+    expect(hub.roster().map((p) => p.nick)).toEqual(["익명 2", "익명 4", "익명 3"]);
+  });
+
+  it("a new host keeps the names it last saw (family)", () => {
+    const seed: RosterEntry[] = [
+      { peerId: "old", nick: "졸린 거북이", host: true, away: false },
+      { peerId: "me", nick: "졸린 거북이 2", host: false, away: false },
+      { peerId: "x", nick: "졸린 거북이 3", host: false, away: false },
+    ];
+    const { hub, join } = setup(2, "family", seed, "me");
+    expect(hub.roster()[0]).toMatchObject({ peerId: "me", nick: "졸린 거북이 2" });
+    join("y", "졸린 거북이");
+    join("x", "졸린 거북이");
+    expect(hub.roster().map((p) => p.nick)).toEqual(["졸린 거북이 2", "졸린 거북이", "졸린 거북이 3"]);
+  });
+
+  it("re-roll renames the host", () => {
+    const { hub, join, said } = setup();
+    join("a");
+    const before = said("roster").length;
+    hub.setMyNick("배고픈 수달");
+    expect(hub.roster()[0].nick).toBe("배고픈 수달");
+    expect(said("roster").length).toBe(before + 1);
+  });
+
+  it("re-roll is ignored in meeting mode", () => {
+    const { hub } = setup(1, "meeting");
+    hub.setMyNick("배고픈 수달");
+    expect(hub.roster()[0].nick).toBe("익명 1");
   });
 });
