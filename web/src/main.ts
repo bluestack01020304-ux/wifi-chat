@@ -2,7 +2,9 @@ import "./style.css";
 import { detectDevice, signalUrl } from "./config";
 import { createHost } from "./host";
 import { Joiner, type View } from "./joiner";
+import type { RoomSnapshot } from "../../server/src/protocol";
 import { Links } from "./links";
+import { linksToClose } from "./merge";
 import { createDialer, type Connection } from "./peer";
 import { Signaling } from "./signaling";
 
@@ -19,7 +21,6 @@ const COPY = {
 const VERDICT_LABEL = { host: "host↔host", "prflx-lan": "host↔사설 prflx", "prflx-hidden": "host↔prflx(주소 가림)" } as const;
 
 const app = document.getElementById("app")!;
-let lastPath = "";
 let socketClosed = false;
 
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, text?: string, cls?: string): HTMLElementTagNameMap[K] {
@@ -51,12 +52,22 @@ function render(view: View): void {
   }
   app.append(section);
 
-  if (lastPath) app.append(el("p", `경로: ${lastPath}`, "status"));
+  const path = currentPath(view);
+  if (path) app.append(el("p", `경로: ${path}`, "status"));
 }
 
-function onConnected(_peerId: string, c: Connection): void {
-  lastPath = VERDICT_LABEL[c.path.verdict];
-  render(joiner.view);
+/** The path of my link to my host (member), or of my latest member link (host). */
+function currentPath(view: View): string {
+  const ids = view.kind === "member" ? [view.hostId] : view.kind === "host" ? [...view.members].reverse() : [];
+  for (const id of ids) {
+    const link = links.get(id);
+    if (link) return VERDICT_LABEL[link.path.verdict];
+  }
+  return "";
+}
+
+function onRoom(room: RoomSnapshot): void {
+  links.close(linksToClose(myId, room, links.ids()));
 }
 
 const page = new URL(location.href);
@@ -64,30 +75,42 @@ const device = detectDevice(navigator.userAgent, matchMedia("(pointer: fine)").m
 const sig = new Signaling(signalUrl(page, device));
 let myId = "";
 const links = new Links<Connection>(() => myId);
-const dialer = createDialer(sig, links, onConnected);
-const host = createHost(sig, links, onConnected);
+const dialer = createDialer(sig, links, () => {});
+const host = createHost(sig, links, () => {});
 const joiner = new Joiner({ send: (m) => sig.send(m), dial: dialer.dial, device, linked: () => links.ids() });
 
 sig.onMessage((m) => {
   switch (m.t) {
     case "welcome":
       myId = m.peerId;
+      // Dev-only test hook: force a second group (`?alone=1`). Stripped from production builds.
+      if (import.meta.env.DEV && page.searchParams.get("alone") === "1") sig.send({ t: "start-alone" });
       joiner.onWelcome(m.peerId, m.room);
+      onRoom(m.room);
       break;
     case "room":
       joiner.onRoom(m.room);
+      onRoom(m.room);
       break;
     case "signal":
       if (m.sdp.type === "answer") dialer.onAnswer(m.from, m.sdp);
-      else if (joiner.view.kind === "host") void host.onOffer(m.from, m.sdp);
+      else void host.onOffer(m.from, m.sdp);
+      break;
+    case "merge-request":
+      joiner.onMergeRequest(m.bridgeId);
       break;
     case "error":
       console.warn("signaling error", m.code, m.message);
+      joiner.onError(m.code);
       break;
   }
 });
 sig.onClose(() => {
   socketClosed = true;
+  render(joiner.view);
+});
+links.onChange(() => {
+  joiner.onLinksChanged();
   render(joiner.view);
 });
 joiner.onChange((v) => render(v));
