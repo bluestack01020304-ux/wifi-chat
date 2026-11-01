@@ -1,6 +1,8 @@
-import { SELF } from "cloudflare:test";
+import { env, runInDurableObject, SELF } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
 import type { RoomSnapshot, ServerMessage } from "../src/protocol";
+import type { Room } from "../src/roomDO";
+import { roomKeyString } from "../src/roomKey";
 
 const sdp = { type: "offer", sdp: "v=0" } as const;
 
@@ -186,5 +188,30 @@ describe("limits", () => {
     }
     expect((await upgrade(q, "203.0.113.5")).status).toBe(429);
     for (const c of clients) c.ws.close(1000, "done");
+  });
+});
+
+describe("dropped sockets", () => {
+  it("a dropped host does not come back while its socket lingers", async () => {
+    const room = freshRoom();
+    const a = await connect("203.0.113.5", `?room=${room}`);
+    await a.nextOf("welcome");
+    const stub = env.ROOMS.get(
+      env.ROOMS.idFromName(roomKeyString("203.0.113.5", { room, mode: "family", key: null, device: "mobile" })),
+    );
+    const welcome = await runInDurableObject(stub, async (instance: Room, state) => {
+      const [hostSocket] = state.getWebSockets();
+      await instance.webSocketError(hostSocket);
+      // Same event turn: the errored socket is still CLOSING and listed by getWebSockets().
+      const res = await instance.fetch(new Request(`https://x/ws?room=${room}`, { headers: { Upgrade: "websocket" } }));
+      const ws = res.webSocket!;
+      const first = new Promise<ServerMessage>((r) => ws.addEventListener("message", (e) => r(JSON.parse(e.data as string))));
+      ws.accept();
+      return first;
+    });
+    expect(welcome.t).toBe("welcome");
+    if (welcome.t !== "welcome") return;
+    expect(peerIds(welcome.room)).toEqual([welcome.peerId]);
+    expect(host(welcome.room)).toBe(welcome.peerId);
   });
 });

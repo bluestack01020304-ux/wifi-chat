@@ -31,6 +31,7 @@ export class Room extends DurableObject {
 
   async webSocketMessage(ws: WebSocket, data: string | ArrayBuffer): Promise<void> {
     const peerId = peerIdOf(ws);
+    if (!peerId) return; // dropped socket
     const msg = parseClientMessage(data);
     if ("error" in msg) {
       safeSend(ws, { t: "error", code: msg.error, message: "invalid message" });
@@ -48,7 +49,11 @@ export class Room extends DurableObject {
   }
 
   private drop(ws: WebSocket, code: number): void {
-    const gone = ws.deserializeAttachment() as PeerRecord;
+    const gone = ws.deserializeAttachment() as PeerRecord | null;
+    if (!gone) return; // already dropped (error and close can both fire)
+    // Tombstone first: a CLOSING socket can stay in getWebSockets(), and its
+    // stale record must never be rebuilt into the room.
+    ws.serializeAttachment(null);
     this.apply((state) => state.leave(gone.peerId), undefined, gone);
     try {
       ws.close(code, "closed");
@@ -87,8 +92,8 @@ export class Room extends DurableObject {
   }
 }
 
-function peerIdOf(ws: WebSocket): string {
-  return (ws.deserializeAttachment() as PeerRecord).peerId;
+function peerIdOf(ws: WebSocket): string | null {
+  return (ws.deserializeAttachment() as PeerRecord | null)?.peerId ?? null;
 }
 
 /** A peer may have closed between our read and our send; that must not throw. */
