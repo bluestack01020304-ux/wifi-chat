@@ -81,7 +81,22 @@ let myId = "";
 const links = new Links<Connection>(() => myId);
 const dialer = createDialer(sig, links, () => {});
 const host = createHost(sig, links, () => {});
-const joiner = new Joiner({ send: (m) => sig.send(m), dial: dialer.dial, device, linked: () => links.ids() });
+const joiner = new Joiner({
+  send: (m) => sig.send(m),
+  dial: dialer.dial,
+  device,
+  linked: () => links.ids(),
+  // Spec 강등: a demoted host stops relaying and closes every DataChannel at once.
+  onDemoted: () => links.close(links.ids()),
+});
+
+/** Spec: a host tells the server it is alive every second; 2 s of silence hands the group on. */
+const HEARTBEAT_MS = 1000;
+// Dev-only test hook: `window.__muteHeartbeat = true` stalls this host to exercise demotion. Stripped from production builds.
+const muted = () => import.meta.env.DEV && (globalThis as { __muteHeartbeat?: boolean }).__muteHeartbeat === true;
+setInterval(() => {
+  if (!socketClosed && !muted() && joiner.view.kind === "host") sig.send({ t: "heartbeat" });
+}, HEARTBEAT_MS);
 
 // Chat: nickname and history live in memory only (closing every tab ends the conversation).
 const myNick = makeNickname(Math.random);
