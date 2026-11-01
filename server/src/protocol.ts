@@ -43,7 +43,9 @@ export type ClientMessage =
   | { t: "unattached" }
   | { t: "start-alone" }
   | { t: "merge-start"; groups: string[]; unattached: string[] }
-  | { t: "merge-commit"; groups: string[]; peers: string[] };
+  | { t: "merge-commit"; groups: string[]; peers: string[] }
+  | { t: "heartbeat" }
+  | { t: "confirm"; groupId: string; term: number };
 
 export type ServerMessage =
   | { t: "welcome"; peerId: string; room: RoomSnapshot }
@@ -84,7 +86,13 @@ export function parseClientMessage(raw: string | ArrayBuffer): ClientMessage | {
   switch (v.t) {
     case "unattached":
     case "start-alone":
+    case "heartbeat":
       return { t: v.t };
+    case "confirm": {
+      const term = v.term;
+      const ok = isId(v.groupId) && typeof term === "number" && Number.isSafeInteger(term) && term > 0;
+      return ok ? { t: "confirm", groupId: v.groupId as string, term: term as number } : { error: "bad-message" };
+    }
     case "joined":
       return isId(v.groupId) ? { t: "joined", groupId: v.groupId } : { error: "bad-message" };
     case "signal": {

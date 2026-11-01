@@ -162,8 +162,8 @@ describe("messages", () => {
 
     a.ws.close(1000, "bye");
     const after = (await b.nextOf("room")).room;
-    expect(after.groups).toEqual([]);
-    expect(after.peers).toEqual([{ peerId: bId, device: "mobile", status: "unattached", groupId: null }]);
+    expect(after.groups).toEqual([{ groupId, hostId: bId, term: 2, members: [] }]);
+    expect(after.peers).toEqual([{ peerId: bId, device: "mobile", status: "host", groupId }]);
   });
 
   it("signal to a peer that just closed does not break the room", async () => {

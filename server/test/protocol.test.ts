@@ -60,3 +60,16 @@ describe("merge messages", () => {
     expect(parseClientMessage('{"t":"merge-commit","groups":[],"peers":"a"}')).toEqual({ error: "bad-message" });
   });
 });
+
+describe("succession messages", () => {
+  it("parses heartbeat and confirm", () => {
+    expect(parseClientMessage(JSON.stringify({ t: "heartbeat", x: 1 }))).toEqual({ t: "heartbeat" });
+    expect(parseClientMessage(JSON.stringify({ t: "confirm", groupId: "g1", term: 2, x: 1 }))).toEqual({ t: "confirm", groupId: "g1", term: 2 });
+  });
+
+  it("rejects a bad confirm", () => {
+    for (const bad of [{ term: 0 }, { term: 1.5 }, { term: "2" }, { term: 2, groupId: "" }]) {
+      expect(parseClientMessage(JSON.stringify({ t: "confirm", groupId: "g1", ...bad }))).toEqual({ error: "bad-message" });
+    }
+  });
+});

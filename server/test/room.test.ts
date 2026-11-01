@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import type { Outgoing } from "../src/room";
-import { type PeerRecord, RoomState, SIGNAL_LIMIT, SIGNAL_WINDOW_MS } from "../src/room";
+import { CONFIRM_WINDOW_MS, HOST_TIMEOUT_MS, type PeerRecord, RoomState, SIGNAL_LIMIT, SIGNAL_WINDOW_MS } from "../src/room";
 
 let n = 0;
 const ids = () => "g" + ++n;
@@ -40,7 +40,7 @@ describe("join", () => {
 
   it("new peer becomes host when only unattached peers remain", () => {
     const s = twoPeers();
-    s.handle("b", { t: "joined", groupId: "g1" });
+    s.handle("b", { t: "unattached" });
     s.leave("a");
     s.join("d", "mobile", 3);
     expect(statusOf(s, "d")).toMatchObject({ status: "host" });
@@ -144,13 +144,12 @@ describe("handle", () => {
 });
 
 describe("leave", () => {
-  it("host leaving dissolves the group", () => {
+  it("host leaving hands the group to its member", () => {
     const s = twoPeers();
     s.handle("b", { t: "joined", groupId: "g1" });
     const out = s.leave("a");
     expect(recipients(out)).toEqual(["b:room"]);
-    expect(statusOf(s, "b")).toMatchObject({ status: "unattached", groupId: null });
-    expect(s.snapshot().groups).toEqual([]);
+    expect(s.snapshot().groups).toEqual([{ groupId: "g1", hostId: "b", term: 2, members: [] }]);
   });
 
   it("member leaving keeps the group", () => {
@@ -186,6 +185,7 @@ describe("persistence", () => {
 describe("merge", () => {
   const rec = (peerId: string, status: PeerRecord["status"], groupId: string | null, term: number, joinedAt: number): PeerRecord => ({
     peerId, device: "mobile", status, groupId, term, joinedAt, signalWindow: 0, signals: 0,
+    lastBeat: 0, windowEnd: 0, tried: status === "host" ? [peerId] : [], confirmedTerm: 0,
   });
   /** A: host a (term 1) + member a1. B: host b (term 3). u unattached. n and m joining. */
   const room = () =>
@@ -270,5 +270,140 @@ describe("merge", () => {
 
   it("commit from a settled peer is rejected", () => {
     expect(room().handle("a1", { t: "merge-commit", groups: [], peers: ["u"] })[0].msg).toMatchObject({ code: "bad-state" });
+  });
+});
+
+describe("succession", () => {
+  const rec = (
+    peerId: string,
+    status: PeerRecord["status"],
+    groupId: string | null,
+    joinedAt: number,
+    device: PeerRecord["device"] = "mobile",
+  ): PeerRecord => ({
+    peerId, device, status, groupId, term: status === "host" ? 1 : 0, joinedAt, signalWindow: 0, signals: 0,
+    lastBeat: 0, windowEnd: 0, tried: status === "host" ? [peerId] : [], confirmedTerm: 0,
+  });
+  /** Group A: host a (term 1, last beat at 0); m1 mobile joined 2, d1 desktop joined 3, m2 mobile joined 4. */
+  const room = () =>
+    new RoomState([rec("a", "host", "A", 1), rec("m1", "member", "A", 2), rec("d1", "member", "A", 3, "desktop"), rec("m2", "member", "A", 4)], ids);
+  const group = (s: RoomState) => s.snapshot().groups.find((g) => g.groupId === "A");
+
+  it("heartbeat keeps a host alive", () => {
+    const s = room();
+    expect(s.handle("a", { t: "heartbeat" }, 1500)).toEqual([]);
+    expect(s.tick(3000)).toEqual([]);
+    expect(group(s)).toMatchObject({ hostId: "a", term: 1 });
+  });
+
+  it("heartbeat from a member is ignored", () => {
+    const s = room();
+    expect(s.handle("m1", { t: "heartbeat" }, 10)).toEqual([]);
+    expect(statusOf(s, "m1")).toMatchObject({ status: "member" });
+  });
+
+  it("stalled host is replaced, desktop first", () => {
+    const s = room();
+    expect(s.tick(HOST_TIMEOUT_MS)).toEqual([]);
+    const out = s.tick(HOST_TIMEOUT_MS + 1);
+    expect(recipients(out)).toEqual(["a:room", "d1:room", "m1:room", "m2:room"]);
+    expect(group(s)).toEqual({ groupId: "A", hostId: "d1", term: 2, members: ["m1", "m2"] });
+    expect(statusOf(s, "a")).toMatchObject({ status: "joining", groupId: null });
+  });
+
+  it("host leaving hands over at once", () => {
+    const s = room();
+    s.leave("a");
+    expect(group(s)).toMatchObject({ hostId: "d1", term: 2 });
+  });
+
+  it("a lone host leaving dissolves its group", () => {
+    const s = new RoomState([rec("a", "host", "A", 1), rec("u", "unattached", null, 2)], ids);
+    s.leave("a");
+    expect(s.snapshot().groups).toEqual([]);
+  });
+
+  it("confirmed members stay, others rejoin", () => {
+    const s = room();
+    s.leave("a", 0);
+    s.handle("m1", { t: "confirm", groupId: "A", term: 2 }, 100);
+    s.handle("d1", { t: "heartbeat" }, CONFIRM_WINDOW_MS);
+    expect(s.tick(100)).toEqual([]);
+    const out = s.tick(CONFIRM_WINDOW_MS + 1);
+    expect(recipients(out)).toEqual(["d1:room", "m1:room", "m2:room"]);
+    expect(statusOf(s, "m1")).toMatchObject({ status: "member", groupId: "A" });
+    expect(statusOf(s, "m2")).toMatchObject({ status: "joining", groupId: null });
+    s.handle("d1", { t: "heartbeat" }, CONFIRM_WINDOW_MS + 1500);
+    expect(s.tick(CONFIRM_WINDOW_MS + 2000)).toEqual([]);
+  });
+
+  it("confirm for an old term is ignored", () => {
+    const s = room();
+    s.leave("a", 0);
+    s.handle("m1", { t: "confirm", groupId: "A", term: 1 }, 100);
+    s.handle("m2", { t: "confirm", groupId: "A", term: 2 }, 100);
+    s.handle("d1", { t: "heartbeat" }, CONFIRM_WINDOW_MS);
+    s.tick(CONFIRM_WINDOW_MS + 1);
+    expect(statusOf(s, "m1")).toMatchObject({ status: "joining" });
+    expect(statusOf(s, "m2")).toMatchObject({ status: "member" });
+  });
+
+  it("nobody confirmed rotates", () => {
+    const s = room();
+    s.leave("a", 0);
+    s.handle("d1", { t: "heartbeat" }, CONFIRM_WINDOW_MS);
+    s.tick(CONFIRM_WINDOW_MS + 1);
+    expect(statusOf(s, "d1")).toMatchObject({ status: "joining", groupId: null });
+    expect(group(s)).toEqual({ groupId: "A", hostId: "m1", term: 3, members: ["m2"] });
+  });
+
+  it("no candidate left dissolves", () => {
+    const s = new RoomState([rec("a", "host", "A", 1), rec("m1", "member", "A", 2)], ids);
+    s.leave("a", 0);
+    expect(group(s)).toMatchObject({ hostId: "m1", term: 2, members: [] });
+
+    const t = new RoomState([rec("a", "host", "A", 1), rec("m1", "member", "A", 2), rec("m2", "member", "A", 3)], ids);
+    t.leave("a", 0);
+    t.handle("m1", { t: "heartbeat" }, CONFIRM_WINDOW_MS);
+    t.tick(CONFIRM_WINDOW_MS + 1);
+    expect(group(t)).toMatchObject({ hostId: "m2", term: 3, members: [] });
+
+    const u = new RoomState([{ ...rec("a", "host", "A", 1), tried: ["x", "a", "m1"] }, rec("m1", "member", "A", 2)], ids);
+    u.leave("a", 0);
+    expect(u.snapshot().groups).toEqual([]);
+    expect(statusOf(u, "m1")).toMatchObject({ status: "joining", groupId: null });
+  });
+
+  it("confirm is only for my own group", () => {
+    const s = room();
+    s.leave("a", 0);
+    expect(s.handle("m1", { t: "confirm", groupId: "Z", term: 2 }, 1)).toEqual([]);
+    expect(s.handle("d1", { t: "confirm", groupId: "A", term: 2 }, 1)).toEqual([]);
+  });
+
+  it("merge sets lastBeat and tried", () => {
+    const s = new RoomState([rec("h1", "host", "A", 1), rec("h2", "host", "B", 2), rec("n", "joining", null, 3)], ids);
+    s.handle("n", { t: "merge-commit", groups: ["A", "B"], peers: ["h1", "h2"] }, 5000);
+    const g = s.snapshot().groups;
+    expect(g).toHaveLength(1);
+    expect(s.tick(5000 + HOST_TIMEOUT_MS)).toEqual([]);
+    expect(s.hasHost()).toBe(true);
+  });
+
+  it("round-trips the new fields through records", () => {
+    const s = room();
+    s.leave("a", 0);
+    s.handle("m1", { t: "confirm", groupId: "A", term: 2 }, 100);
+    s.handle("d1", { t: "heartbeat" }, CONFIRM_WINDOW_MS);
+    const t = new RoomState(s.records(), ids);
+    t.tick(CONFIRM_WINDOW_MS + 1);
+    expect(statusOf(t, "m1")).toMatchObject({ status: "member" });
+    expect(statusOf(t, "m2")).toMatchObject({ status: "joining" });
+  });
+
+  it("records from before this change load with safe defaults", () => {
+    const old = { peerId: "a", device: "mobile", status: "host", groupId: "A", term: 1, joinedAt: 1, signalWindow: 0, signals: 0 } as unknown as PeerRecord;
+    const s = new RoomState([old], ids);
+    expect(s.hasHost()).toBe(true);
   });
 });
