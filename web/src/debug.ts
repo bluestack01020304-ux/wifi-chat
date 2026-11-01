@@ -28,3 +28,30 @@ export function candidateSummary(sdp: string): string {
   }
   return out.length ? out.join(", ") : "(후보 없음)";
 }
+
+type Stat = { id: string; type: string; [k: string]: unknown };
+
+const shortAddr = (a: unknown) => {
+  const s = typeof a === "string" ? a : "?";
+  return s.endsWith(".local") ? `${s.slice(0, 4)}….local` : s || "(가림)";
+};
+
+/**
+ * Per candidate pair: "local ↔ remote state req sent/received resp received/sent".
+ * Shows which direction of the ICE connectivity checks is getting through.
+ */
+export function pairCounters(stats: Iterable<Stat>): string {
+  const all = [...stats];
+  const byId = new Map(all.map((s) => [s.id, s]));
+  const cand = (id: unknown) => {
+    const c = byId.get(String(id));
+    return c ? `${c.candidateType} ${shortAddr(c.address ?? c.ip)}` : "?";
+  };
+  const pairs = all
+    .filter((s) => s.type === "candidate-pair")
+    .map(
+      (p) =>
+        `${cand(p.localCandidateId)} ↔ ${cand(p.remoteCandidateId)} ${p.state} req ${p.requestsSent ?? 0}/${p.requestsReceived ?? 0} resp ${p.responsesReceived ?? 0}/${p.responsesSent ?? 0}`,
+    );
+  return pairs.length ? pairs.join("; ") : "(후보 쌍 없음)";
+}

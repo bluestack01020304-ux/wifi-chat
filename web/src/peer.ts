@@ -1,5 +1,5 @@
 import type { Sdp } from "../../server/src/protocol";
-import { candidateSummary, debug } from "./debug";
+import { candidateSummary, debug, pairCounters } from "./debug";
 import type { Dial } from "./joiner";
 import type { Links } from "./links";
 import { checkSelectedPair, type PairResult, type StatLike } from "./pairCheck";
@@ -26,6 +26,19 @@ export function newPeerConnection(): RTCPeerConnection {
 export function watch(pc: RTCPeerConnection, label: string): void {
   if (!debug.enabled) return;
   pc.addEventListener("iceconnectionstatechange", () => debug.log(`${label} ice=${pc.iceConnectionState}`));
+  // While checking, show every second which direction of the connectivity checks gets through.
+  const timer = setInterval(async () => {
+    if (pc.iceConnectionState !== "checking" && pc.iceConnectionState !== "new") {
+      clearInterval(timer);
+      return;
+    }
+    try {
+      const report = await pc.getStats();
+      debug.log(`${label} pairs: ${pairCounters([...report.values()] as StatLike[])}`);
+    } catch {
+      clearInterval(timer);
+    }
+  }, 1000);
   pc.addEventListener("connectionstatechange", () => debug.log(`${label} conn=${pc.connectionState}`));
 }
 
