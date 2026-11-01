@@ -1,38 +1,26 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { ClientMessage, PeerStatus, RoomSnapshot } from "../../server/src/protocol";
+import type { ClientMessage } from "../../server/src/protocol";
 import { DIAL_TIMEOUT_MS, Joiner, type View } from "../src/joiner";
+import { MERGE_TIMEOUT_MS } from "../src/merge";
+import { type P, snap } from "./snap";
 
-type P = { id: string; status: PeerStatus; group?: string };
-/** Peers in join order; a host's `group` is its groupId, a member's `group` points at one. */
-function snap(...peers: P[]): RoomSnapshot {
-  return {
-    peers: peers.map((p) => ({ peerId: p.id, device: "mobile", status: p.status, groupId: p.group ?? null })),
-    groups: peers
-      .filter((p) => p.status === "host")
-      .map((h) => ({
-        groupId: h.group!,
-        hostId: h.id,
-        term: 1,
-        members: peers.filter((p) => p.status === "member" && p.group === h.group).map((p) => p.id),
-      })),
-  };
-}
-
-/** A dial double: each call gets a promise the test settles by host id. */
+/** A dial double: each call gets a promise the test settles by host id. A successful dial links the peer, as the real dialer does. */
 function harness() {
   const sent: ClientMessage[] = [];
+  const linked = new Set<string>();
   const calls: { hostId: string; signal: AbortSignal; resolve: () => void; reject: (e: Error) => void }[] = [];
   const dial = vi.fn((hostId: string, signal: AbortSignal) =>
     new Promise<void>((resolve, reject) => calls.push({ hostId, signal, resolve, reject: (e) => reject(e) })),
   );
-  const j = new Joiner({ send: (m) => sent.push(m), dial });
+  const j = new Joiner({ send: (m) => sent.push(m), dial, device: "mobile", linked: () => linked });
   const settle = async (hostId: string, ok: boolean) => {
     const c = [...calls].reverse().find((c) => c.hostId === hostId)!;
+    if (ok) linked.add(hostId);
     if (ok) c.resolve();
     else c.reject(new Error("nope"));
     await vi.advanceTimersByTimeAsync(0);
   };
-  return { j, sent, calls, dial, settle };
+  return { j, sent, calls, dial, settle, linked };
 }
 
 const h1: P = { id: "h1", status: "host", group: "g1" };
@@ -70,14 +58,46 @@ describe("joining", () => {
     expect(j.view).toEqual({ kind: "connecting" });
   });
 
-  it("first success wins", async () => {
+  it("dials hosts and unattached", () => {
+    const { j, dial } = harness();
+    j.onWelcome("me", snap(h1, { id: "u", status: "unattached" }, meJoining));
+    expect(dial.mock.calls.map((c) => c[0])).toEqual(["h1", "u"]);
+  });
+
+  it("waits for every dial before deciding", async () => {
     const { j, sent, calls, settle } = harness();
     j.onWelcome("me", snap(h1, h2, meJoining));
-    await settle("h2", true);
-    expect(sent).toEqual([{ t: "joined", groupId: "g2" }]);
-    expect(calls.find((c) => c.hostId === "h1")!.signal.aborted).toBe(true);
-    expect(calls.find((c) => c.hostId === "h2")!.signal.aborted).toBe(false);
     await settle("h1", true);
+    expect(sent).toEqual([]);
+    await settle("h2", true);
+    expect(sent[0]).toEqual({ t: "merge-start", groups: ["g1", "g2"], unattached: [] });
+    expect(calls.some((c) => c.signal.aborted)).toBe(false);
+  });
+
+  it("single reachable host joins", async () => {
+    const { j, sent, calls, settle } = harness();
+    j.onWelcome("me", snap(h1, h2, meJoining));
+    await settle("h2", false);
+    await settle("h1", true);
+    expect(sent).toEqual([{ t: "joined", groupId: "g1" }]);
+    expect(calls.find((c) => c.hostId === "h1")!.signal.aborted).toBe(false);
+  });
+
+  it("timeout decides with what was reached", async () => {
+    const { j, sent, calls, settle } = harness();
+    j.onWelcome("me", snap(h1, h2, meJoining));
+    await settle("h1", true);
+    await vi.advanceTimersByTimeAsync(DIAL_TIMEOUT_MS);
+    expect(sent).toEqual([{ t: "joined", groupId: "g1" }]);
+    expect(calls.find((c) => c.hostId === "h2")!.signal.aborted).toBe(true);
+    expect(calls.find((c) => c.hostId === "h1")!.signal.aborted).toBe(false);
+  });
+
+  it("mobile joins desktop host instead of merging", async () => {
+    const { j, sent, settle } = harness();
+    j.onWelcome("me", snap(h1, { ...h2, device: "desktop" }, meJoining));
+    await settle("h1", true);
+    await settle("h2", true);
     expect(sent).toEqual([{ t: "joined", groupId: "g2" }]);
   });
 
@@ -117,6 +137,7 @@ describe("joining", () => {
   it("waits for member after joined, redials if that group vanishes", async () => {
     const { j, dial, settle } = harness();
     j.onWelcome("me", snap(h1, h2, meJoining));
+    await settle("h1", false);
     await settle("h2", true);
     j.onRoom(snap(h1, h2, meJoining));
     expect(dial).toHaveBeenCalledTimes(2);
@@ -131,6 +152,94 @@ describe("joining", () => {
     await settle("h1", true);
     j.onRoom(snap(h1, { id: "me", status: "member", group: "g1" }));
     expect(j.view).toEqual({ kind: "member", groupId: "g1", hostId: "h1" });
+  });
+});
+
+describe("bridge merge", () => {
+  const x: P = { id: "x", status: "member", group: "g1" };
+  const u: P = { id: "u", status: "unattached" };
+
+  it("merge commits when every member links", async () => {
+    const { j, sent, settle, linked } = harness();
+    j.onWelcome("me", snap(h1, x, h2, meJoining));
+    await settle("h1", true);
+    await settle("h2", true);
+    expect(sent).toEqual([{ t: "merge-start", groups: ["g1", "g2"], unattached: [] }]);
+    expect(j.view).toEqual({ kind: "connecting" });
+    linked.add("x");
+    j.onLinksChanged();
+    expect(sent[1]).toEqual({ t: "merge-commit", groups: ["g1", "g2"], peers: ["h1", "x", "h2"] });
+  });
+
+  it("merge with no members to wait for commits at once", async () => {
+    const { j, sent, settle } = harness();
+    j.onWelcome("me", snap(h1, h2, meJoining));
+    await settle("h1", true);
+    await settle("h2", true);
+    expect(sent[1]).toEqual({ t: "merge-commit", groups: ["g1", "g2"], peers: ["h1", "h2"] });
+  });
+
+  it("merge timeout falls back to joining when only one group is whole", async () => {
+    const { j, sent, settle } = harness();
+    j.onWelcome("me", snap(h1, x, h2, meJoining));
+    await settle("h1", true);
+    await settle("h2", true);
+    await vi.advanceTimersByTimeAsync(MERGE_TIMEOUT_MS);
+    expect(sent.slice(1)).toEqual([{ t: "joined", groupId: "g1" }]);
+  });
+
+  it("merge timeout commits the unattached it pulled", async () => {
+    const { j, sent, settle } = harness();
+    j.onWelcome("me", snap(h1, x, u, meJoining));
+    await settle("h1", true);
+    await settle("u", true);
+    expect(sent).toEqual([{ t: "merge-start", groups: ["g1"], unattached: ["u"] }]);
+    await vi.advanceTimersByTimeAsync(MERGE_TIMEOUT_MS);
+    expect(sent.slice(1)).toEqual([{ t: "merge-commit", groups: [], peers: ["u"] }]);
+  });
+
+  it("rejected commit redials from the current snapshot", async () => {
+    const { j, sent, dial, settle } = harness();
+    j.onWelcome("me", snap(h1, h2, meJoining));
+    await settle("h1", true);
+    await settle("h2", true);
+    expect(sent.at(-1)).toMatchObject({ t: "merge-commit" });
+    dial.mockClear();
+    const n2: P = { id: "n2", status: "host", group: "g7" };
+    j.onRoom(snap({ ...h1, status: "member", group: "g7" }, { ...h2, status: "member", group: "g7" }, n2, meJoining));
+    expect(dial).not.toHaveBeenCalled();
+    j.onError("bad-state");
+    expect(dial.mock.calls.map((c) => c[0])).toEqual(["n2"]);
+  });
+
+  it("becoming host ends the merge", async () => {
+    const { j, settle } = harness();
+    j.onWelcome("me", snap(h1, h2, meJoining));
+    await settle("h1", true);
+    await settle("h2", true);
+    j.onRoom(snap({ id: "me", status: "host", group: "g8" }, { ...h1, status: "member", group: "g8" }, { ...h2, status: "member", group: "g8" }));
+    expect(j.view).toEqual({ kind: "host", groupId: "g8", members: ["h1", "h2"], aloneInRoom: false });
+  });
+
+  it("merge request makes a member dial the bridge", async () => {
+    const { j, dial, settle } = harness();
+    j.onWelcome("me", snap(h1, meJoining));
+    await settle("h1", true);
+    j.onRoom(snap(h1, { id: "me", status: "member", group: "g1" }));
+    dial.mockClear();
+    j.onMergeRequest("n");
+    j.onMergeRequest("n");
+    expect(dial.mock.calls.map((c) => c[0])).toEqual(["n"]);
+    await settle("n", false);
+    j.onMergeRequest("n");
+    expect(dial).toHaveBeenCalledTimes(2);
+  });
+
+  it("merge request is ignored unless I am a member", () => {
+    const { j, dial } = harness();
+    j.onWelcome("me", snap({ id: "me", status: "host", group: "g9" }));
+    j.onMergeRequest("n");
+    expect(dial).not.toHaveBeenCalled();
   });
 });
 
@@ -154,6 +263,12 @@ describe("unattached", () => {
     const { j, dial } = await failedWith(h1);
     j.onRoom(snap(h1, meUnattached));
     expect(dial).not.toHaveBeenCalled();
+  });
+
+  it("retries when a new unattached peer appears", async () => {
+    const { j, dial } = await failedWith(h1);
+    j.onRoom(snap(h1, meUnattached, { id: "v", status: "unattached" }));
+    expect(dial.mock.calls.map((c) => c[0])).toEqual(["h1", "v"]);
   });
 
   it("a failed retry sends nothing more", async () => {

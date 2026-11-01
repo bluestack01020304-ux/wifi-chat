@@ -66,7 +66,7 @@ let myId = "";
 const links = new Links<Connection>(() => myId);
 const dialer = createDialer(sig, links, onConnected);
 const host = createHost(sig, links, onConnected);
-const joiner = new Joiner({ send: (m) => sig.send(m), dial: dialer.dial });
+const joiner = new Joiner({ send: (m) => sig.send(m), dial: dialer.dial, device, linked: () => links.ids() });
 
 sig.onMessage((m) => {
   switch (m.t) {
