@@ -4,10 +4,10 @@ import { AWAY_MS, HostHub, SAY_LIMIT, SAY_WINDOW_MS } from "../../src/chat/hostH
 
 const j = (v: unknown) => JSON.stringify(v);
 
-function setup() {
+function setup(term = 1) {
   const history = new History();
   const out: [string, { t: string; [k: string]: unknown }][] = [];
-  const hub = new HostHub({ myId: "h", myNick: "호스트 고양이", history, send: (to, frame) => out.push([to, JSON.parse(frame)]), now: () => Date.now() });
+  const hub = new HostHub({ myId: "h", myNick: "호스트 고양이", history, term, send: (to, frame) => out.push([to, JSON.parse(frame)]), now: () => Date.now() });
   const join = (id: string, nick = "닉" + id) => {
     hub.attach(id);
     hub.onFrame(id, j({ t: "hello", nick }));
@@ -27,7 +27,7 @@ describe("HostHub", () => {
     const { hub, history, out, join } = setup();
     history.add({ id: "old", from: "h", nick: "n", text: "earlier", at: 1 });
     join("a");
-    expect(out[0]).toEqual(["a", { t: "history", msgs: history.list() }]);
+    expect(out[0]).toEqual(["a", { t: "history", msgs: history.list(), term: 1 }]);
     out.length = 0;
     join("b");
     expect(out.map(([to, f]) => `${to}:${f.t}`).sort()).toEqual(["a:roster", "b:history", "b:roster"]);
@@ -44,7 +44,7 @@ describe("HostHub", () => {
     join("b");
     hub.onFrame("a", j({ t: "say", id: "m1", text: "hi", from: "evil", nick: "가짜" }));
     const msg = { id: "m1", from: "a", nick: "닉a", text: "hi", at: 1000 };
-    expect(said("msg")).toEqual([["a", { t: "msg", msg }], ["b", { t: "msg", msg }]]);
+    expect(said("msg")).toEqual([["a", { t: "msg", msg, term: 1 }], ["b", { t: "msg", msg, term: 1 }]]);
     expect(history.list()).toEqual([msg]);
   });
 
@@ -179,5 +179,20 @@ describe("HostHub", () => {
     expect(history.list()).toHaveLength(1);
     hub.onFrame("a", j({ t: "say", id: "z", text: "after close" }));
     expect(history.list()).toHaveLength(1);
+  });
+});
+
+describe("HostHub term", () => {
+  it("stamps its term on every frame", () => {
+    vi.useFakeTimers();
+    try {
+      const { hub, out, join } = setup(7);
+      join("a");
+      hub.say("hi");
+      expect(out.map(([, f]) => f.t)).toEqual(["history", "roster", "msg"]);
+      expect(out.every(([, f]) => f.term === 7)).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

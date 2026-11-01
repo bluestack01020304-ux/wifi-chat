@@ -30,8 +30,9 @@ const isOpen = (ch: ChannelLike | undefined): ch is ChannelLike => !!ch && ch.re
  */
 export class ChatSession {
   private hub: HostHub | null = null;
+  private hubTerm = 0;
   private attached = new Map<string, ChannelLike>();
-  private member: { chat: MemberChat; hostId: string; channel: ChannelLike } | null = null;
+  private member: { chat: MemberChat; hostId: string; term: number; channel: ChannelLike } | null = null;
   private listeners: (() => void)[] = [];
 
   constructor(private deps: ChatSessionDeps) {}
@@ -39,10 +40,11 @@ export class ChatSession {
   update(view: View): void {
     if (view.kind === "host") {
       this.dropMember();
-      this.updateHost(view.members);
+      if (this.hub && this.hubTerm !== view.term) this.dropHub();
+      this.updateHost(view.members, view.term);
     } else if (view.kind === "member") {
       this.dropHub();
-      this.updateMember(view.hostId);
+      this.updateMember(view.hostId, view.term);
     } else {
       this.dropHub();
       this.dropMember();
@@ -71,12 +73,13 @@ export class ChatSession {
     this.listeners.push(cb);
   }
 
-  private updateHost(members: string[]): void {
+  private updateHost(members: string[], term: number): void {
     if (!this.hub) {
       const hub = new HostHub({
         myId: this.deps.myId(),
         myNick: this.deps.myNick,
         history: this.deps.history,
+        term,
         now: this.deps.now,
         newId: this.deps.newId,
         send: (peerId, frame) => {
@@ -86,6 +89,7 @@ export class ChatSession {
       });
       hub.onRoster(() => this.changed());
       this.hub = hub;
+      this.hubTerm = term;
       this.changed();
     }
     const hub = this.hub;
@@ -114,21 +118,23 @@ export class ChatSession {
     }
   }
 
-  private updateMember(hostId: string): void {
+  private updateMember(hostId: string, term: number): void {
     const ch = this.deps.channel(hostId);
-    if (this.member && this.member.hostId === hostId && this.member.channel === ch && isOpen(ch)) return;
+    const m = this.member;
+    if (m && m.hostId === hostId && m.term === term && m.channel === ch && isOpen(ch)) return;
     this.dropMember();
     if (!isOpen(ch)) return;
 
     const chat = new MemberChat({
       myNick: this.deps.myNick,
       history: this.deps.history,
+      term,
       newId: this.deps.newId,
       send: (frame) => {
         if (this.member?.chat === chat && isOpen(ch)) ch.send(frame);
       },
     });
-    const entry = { chat, hostId, channel: ch };
+    const entry = { chat, hostId, term, channel: ch };
     this.member = entry;
     chat.onRoster(() => this.changed());
     ch.addEventListener("message", (e) => {

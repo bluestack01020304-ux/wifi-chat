@@ -37,7 +37,7 @@ describe("parseToHost", () => {
 describe("historyFrame", () => {
   it("a full history of maximum-length emoji still fits and parses", () => {
     const msgs = Array.from({ length: MAX_HISTORY }, (_, i) => ({ ...msg, id: "m" + i, at: i, text: "😀".repeat(500) }));
-    const frame = historyFrame(msgs);
+    const frame = historyFrame(msgs, 1);
     expect(new TextEncoder().encode(frame).length).toBeLessThanOrEqual(MAX_FRAME);
     const parsed = parseToMember(frame);
     expect(parsed).toMatchObject({ t: "history" });
@@ -48,16 +48,16 @@ describe("historyFrame", () => {
   });
 
   it("a small history is sent whole", () => {
-    expect(parseToMember(historyFrame([msg]))).toEqual({ t: "history", msgs: [msg] });
+    expect(parseToMember(historyFrame([msg], 3))).toEqual({ t: "history", msgs: [msg], term: 3 });
   });
 });
 
 describe("parseToMember", () => {
   it("parses msg, history and roster", () => {
-    expect(parseToMember(j({ t: "msg", msg: { ...msg, x: 1 } }))).toEqual({ t: "msg", msg });
-    expect(parseToMember(j({ t: "history", msgs: [msg] }))).toEqual({ t: "history", msgs: [msg] });
+    expect(parseToMember(j({ t: "msg", msg: { ...msg, x: 1 }, term: 2 }))).toEqual({ t: "msg", msg, term: 2 });
+    expect(parseToMember(j({ t: "history", msgs: [msg], term: 2 }))).toEqual({ t: "history", msgs: [msg], term: 2 });
     const p = { peerId: "a", nick: "n", host: true, away: false };
-    expect(parseToMember(j({ t: "roster", people: [{ ...p, y: 2 }] }))).toEqual({ t: "roster", people: [p] });
+    expect(parseToMember(j({ t: "roster", people: [{ ...p, y: 2 }], term: 2 }))).toEqual({ t: "roster", people: [p], term: 2 });
   });
 
   it("rejects malformed frames", () => {
@@ -66,5 +66,13 @@ describe("parseToMember", () => {
     expect(parseToMember(j({ t: "roster", people: [{ peerId: "a", nick: "n", host: true }] }))).toBeNull();
     expect(parseToMember(j({ t: "say", id: "m", text: "x" }))).toBeNull();
     expect(parseToMember("x".repeat(MAX_FRAME + 1))).toBeNull();
+  });
+});
+
+describe("term on member frames", () => {
+  it("rejects a missing or invalid term", () => {
+    const m = { id: "m1", from: "a", nick: "n", text: "hi", at: 5 };
+    expect(parseToMember(JSON.stringify({ t: "msg", msg: m }))).toBeNull();
+    for (const term of [0, -1, 1.5, "2"]) expect(parseToMember(JSON.stringify({ t: "msg", msg: m, term }))).toBeNull();
   });
 });

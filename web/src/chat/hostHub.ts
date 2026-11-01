@@ -19,6 +19,8 @@ export interface HostHubDeps {
   myId: string;
   myNick: string;
   history: History;
+  /** The group's current term, stamped on every frame. */
+  term: number;
   send(peerId: string, frame: string): void;
   now(): number;
   newId?(): string;
@@ -79,9 +81,9 @@ export class HostHub {
         m.asked = frame.nick;
         m.nick = this.uniqueNick(peerId, frame.nick);
       }
-      this.deps.send(peerId, historyFrame(this.deps.history.list()));
+      this.deps.send(peerId, historyFrame(this.deps.history.list(), this.deps.term));
       if (changed) this.rosterChanged();
-      else this.sendTo(peerId, { t: "roster", people: this.roster() });
+      else this.sendTo(peerId, { t: "roster", people: this.roster(), term: this.deps.term });
       return;
     }
     if (m.nick === null) return;
@@ -138,11 +140,11 @@ export class HostHub {
 
   private relay(msg: ChatMessage): void {
     if (!this.deps.history.add(msg)) return;
-    this.broadcast({ t: "msg", msg });
+    this.broadcast({ t: "msg", msg, term: this.deps.term });
   }
 
   private rosterChanged(): void {
-    this.broadcast({ t: "roster", people: this.roster() });
+    this.broadcast({ t: "roster", people: this.roster(), term: this.deps.term });
     for (const cb of this.listeners) cb();
   }
 

@@ -11,6 +11,8 @@ export const HELLO_RETRY_MS = 1000;
 export interface MemberChatDeps {
   myNick: string;
   history: History;
+  /** My host's current term; frames stamped with any other term are dropped. */
+  term: number;
   send(frame: string): void;
   newId(): string;
 }
@@ -41,7 +43,7 @@ export class MemberChat {
 
   onFrame(raw: unknown): void {
     const frame = parseToMember(raw);
-    if (!frame) return;
+    if (!frame || frame.term !== this.deps.term) return;
     switch (frame.t) {
       case "msg":
         this.deps.history.add(frame.msg);

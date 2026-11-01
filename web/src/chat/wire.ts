@@ -20,10 +20,11 @@ export interface RosterEntry {
 }
 
 export type ToHost = { t: "hello"; nick: string } | { t: "say"; id: string; text: string };
+/** Every host → member frame carries the host's term; members drop frames from any other term. */
 export type ToMember =
-  | { t: "msg"; msg: ChatMessage }
-  | { t: "history"; msgs: ChatMessage[] }
-  | { t: "roster"; people: RosterEntry[] };
+  | { t: "msg"; msg: ChatMessage; term: number }
+  | { t: "history"; msgs: ChatMessage[]; term: number }
+  | { t: "roster"; people: RosterEntry[]; term: number };
 
 // C0 controls except "\n", DEL and C1 controls.
 const CONTROLS = /[\u0000-\u0009\u000B-\u001F\u007F-\u009F]/g;
@@ -91,11 +92,11 @@ function all<T>(v: unknown, max: number, item: (x: unknown) => T | null): T[] | 
  * MAX_FRAME UTF-8 bytes. The receiver checks UTF-16 length, which is never
  * larger than the UTF-8 byte count, so a frame built here always passes.
  */
-export function historyFrame(msgs: ChatMessage[]): string {
+export function historyFrame(msgs: ChatMessage[], term: number): string {
   const encoder = new TextEncoder();
   let start = 0;
   for (;;) {
-    const frame = JSON.stringify({ t: "history", msgs: msgs.slice(start) } satisfies ToMember);
+    const frame = JSON.stringify({ t: "history", msgs: msgs.slice(start), term } satisfies ToMember);
     if (encoder.encode(frame).length <= MAX_FRAME || start >= msgs.length) return frame;
     start++;
   }
@@ -118,18 +119,20 @@ export function parseToHost(raw: unknown): ToHost | null {
 export function parseToMember(raw: unknown): ToMember | null {
   const v = decode(raw);
   if (!v) return null;
+  const term = v.term;
+  if (typeof term !== "number" || !Number.isSafeInteger(term) || term < 1) return null;
   switch (v.t) {
     case "msg": {
       const msg = message(v.msg);
-      return msg ? { t: "msg", msg } : null;
+      return msg ? { t: "msg", msg, term } : null;
     }
     case "history": {
       const msgs = all(v.msgs, MAX_HISTORY, message);
-      return msgs ? { t: "history", msgs } : null;
+      return msgs ? { t: "history", msgs, term } : null;
     }
     case "roster": {
       const people = all(v.people, 64, rosterEntry);
-      return people ? { t: "roster", people } : null;
+      return people ? { t: "roster", people, term } : null;
     }
     default:
       return null;

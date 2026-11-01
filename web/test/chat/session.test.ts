@@ -124,7 +124,7 @@ describe("ChatSession", () => {
       expect(toHost.sent).toEqual([{ t: "hello", nick: "나" }]);
       vi.advanceTimersByTime(HELLO_RETRY_MS);
       expect(toHost.sent).toHaveLength(2);
-      toHost.say({ t: "history", msgs: [] });
+      toHost.say({ t: "history", msgs: [], term: 1 });
       vi.advanceTimersByTime(HELLO_RETRY_MS * 3);
       expect(toHost.sent).toHaveLength(2);
     } finally {
@@ -146,5 +146,32 @@ describe("ChatSession", () => {
     expect(s.canSend()).toBe(false);
     s.update(host([]));
     expect(s.canSend()).toBe(true);
+  });
+});
+
+describe("ChatSession term", () => {
+  it("a new term for the same host replaces the member role", () => {
+    const channels = new Map<string, FakeChannel>();
+    const s = new ChatSession({ myNick: "나", history: new History(), channel: (id) => channels.get(id), myId: () => "me", now: () => 1, newId: () => "x" });
+    const h = new FakeChannel();
+    channels.set("h", h);
+    s.update({ kind: "member", groupId: "g", hostId: "h", term: 1 });
+    s.update({ kind: "member", groupId: "g", hostId: "h", term: 2 });
+    expect(h.sent.filter((f) => f.t === "hello")).toHaveLength(2);
+    h.say({ t: "roster", people: [{ peerId: "h", nick: "n", host: true, away: false }], term: 1 });
+    expect(s.roster()).toEqual([]);
+    h.say({ t: "roster", people: [{ peerId: "h", nick: "n", host: true, away: false }], term: 2 });
+    expect(s.roster()).toHaveLength(1);
+  });
+
+  it("a host whose term changes stamps the new term", () => {
+    const channels = new Map<string, FakeChannel>();
+    const s = new ChatSession({ myNick: "나", history: new History(), channel: (id) => channels.get(id), myId: () => "me", now: () => 1, newId: () => "x" });
+    const a = new FakeChannel();
+    channels.set("a", a);
+    s.update({ kind: "host", groupId: "g", members: ["a"], aloneInRoom: false, term: 1 });
+    s.update({ kind: "host", groupId: "g", members: ["a"], aloneInRoom: false, term: 2 });
+    a.say({ t: "hello", nick: "에이" });
+    expect(a.sent.map((f) => f.term)).toEqual([2, 2]);
   });
 });
