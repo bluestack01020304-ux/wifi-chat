@@ -1,0 +1,63 @@
+:root {
+  --bg: #fafaf7;
+  --fg: #1d1d1b;
+  --muted: #6b6b66;
+  --ok: #1f7a4d;
+  --bad: #b3261e;
+  --banner-bg: #fff4d6;
+  --button-bg: #1d1d1b;
+  --button-fg: #fafaf7;
+  color-scheme: light dark;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #161615;
+    --fg: #ecece8;
+    --muted: #a1a19b;
+    --ok: #5fcf93;
+    --bad: #ff8a80;
+    --banner-bg: #3a3220;
+    --button-bg: #ecece8;
+    --button-fg: #161615;
+  }
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font: 16px/1.5 system-ui, -apple-system, "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+}
+#app {
+  max-width: 32rem;
+  margin: 0 auto;
+  padding: 24px 16px;
+}
+.entry,
+.status {
+  color: var(--muted);
+  font-size: 14px;
+}
+.view p {
+  margin: 12px 0;
+}
+.banner {
+  background: var(--banner-bg);
+  padding: 8px 12px;
+  border-radius: 8px;
+}
+.ok {
+  color: var(--ok);
+}
+.bad {
+  color: var(--bad);
+}
+button {
+  font: inherit;
+  padding: 10px 16px;
+  border: 0;
+  border-radius: 8px;
+  background: var(--button-bg);
+  color: var(--button-fg);
+  cursor: pointer;
+}
