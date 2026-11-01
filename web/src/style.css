@@ -340,3 +340,9 @@ fieldset.radios legend {
   color: var(--muted);
   border-top: 1px dashed var(--soft-line);
 }
+
+.hint {
+  background: var(--banner-bg);
+  padding: 8px 12px;
+  border-radius: 8px;
+}

@@ -51,6 +51,8 @@ export const COPY = {
   badUrl: "이 방 주소가 올바르지 않아요",
   toDefault: "기본 방으로 가기",
   path: "경로",
+  hintSelf: "안드로이드에서는 휴대폰 설정 → 애플리케이션 → 지금 쓰는 브라우저(Chrome 등) → 권한에서 '근처 기기'를 허용한 뒤 새로고침해 주세요",
+  hintPeer: "상대가 안드로이드 크롬이라면, 그 휴대폰에서 브라우저의 '근처 기기' 권한을 허용해야 연결돼요",
 };
 
 export function el<K extends keyof HTMLElementTagNameMap>(tag: K, text?: string, cls?: string): HTMLElementTagNameMap[K] {
@@ -78,6 +80,8 @@ export interface UiState {
   myNick: string;
   path: string;
   notes: Note[];
+  /** Android 17 nearby-devices hint (see hints.ts). */
+  hint: "self" | "peer" | null;
 }
 
 export interface AppDeps {
@@ -175,6 +179,7 @@ export function createApp(root: HTMLElement, deps: AppDeps): { render(s: UiState
       parts.push(el("p", COPY.aloneBanner, "banner"));
       if (v.aloneInRoom) parts.push(el("p", COPY.waiting, "muted"));
     }
+    if (s.hint && !s.socketClosed) parts.push(el("p", s.hint === "self" ? COPY.hintSelf : COPY.hintPeer, "hint small"));
     if (s.path) parts.push(el("p", `${COPY.path}: ${s.path}`, "muted tiny"));
     status.replaceChildren(...parts);
   }

@@ -7,6 +7,7 @@ import { ChatSession } from "./chat/session";
 import type { RosterEntry } from "./chat/wire";
 import { detectDevice, signalUrl } from "./config";
 import { debug } from "./debug";
+import { permissionHint } from "./hints";
 import { createHost } from "./host";
 import { Joiner, type View } from "./joiner";
 import { Links } from "./links";
@@ -123,7 +124,8 @@ function boot(room: RoomInfo): void {
 
   function render(): void {
     const view = joiner.view;
-    ui.render({ view, socketClosed, entered, othersInRoom, myNick, path: currentPath(view), notes });
+    const hint = permissionHint(navigator.userAgent, view, othersInRoom);
+    ui.render({ view, socketClosed, entered, othersInRoom, myNick, path: currentPath(view), notes, hint });
   }
 
   function refresh(): void {
