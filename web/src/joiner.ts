@@ -9,8 +9,8 @@ export type Dial = (peerId: string, signal: AbortSignal) => Promise<void>;
 
 export type View =
   | { kind: "connecting" }
-  | { kind: "host"; groupId: string; members: string[]; aloneInRoom: boolean }
-  | { kind: "member"; groupId: string; hostId: string }
+  | { kind: "host"; groupId: string; members: string[]; aloneInRoom: boolean; term: number }
+  | { kind: "member"; groupId: string; hostId: string; term: number }
   | { kind: "failed" };
 
 interface Attempt {
@@ -35,6 +35,8 @@ export interface JoinerDeps {
   linked(): ReadonlySet<string>;
   timeoutMs?: number;
   mergeTimeoutMs?: number;
+  /** The server took my host role away (stalled host): close every link before rejoining. */
+  onDemoted?(): void;
 }
 
 /**
@@ -52,6 +54,10 @@ export class Joiner {
   private pendingGroup: string | null = null;
   private startedAlone = false;
   private bridgeDials = new Set<string>();
+  private lastStatus: string | null = null;
+  /** `${groupId}:${term}` I already confirmed, and a dial in flight to confirm a newer one. */
+  private confirmed: string | null = null;
+  private confirmDial: { key: string; controller: AbortController } | null = null;
   private current: View | null = null;
   private listeners: ((v: View) => void)[] = [];
   private deps: JoinerDeps;
@@ -82,20 +88,33 @@ export class Joiner {
     const me = room.peers.find((p) => p.peerId === this.peerId);
     if (!me) return;
     if (me.status !== "unattached") this.startedAlone = false;
+    const was = this.lastStatus;
+    this.lastStatus = me.status;
+    if (was === "host" && (me.status === "joining" || me.status === "unattached")) this.deps.onDemoted?.();
+    if (me.status !== "member") this.abortConfirm();
 
     switch (me.status) {
       case "host": {
         this.settle();
         const group = room.groups.find((g) => g.hostId === this.peerId);
         if (group) {
-          this.setView({ kind: "host", groupId: group.groupId, members: group.members, aloneInRoom: room.peers.length === 1 });
+          this.setView({
+            kind: "host",
+            groupId: group.groupId,
+            members: group.members,
+            aloneInRoom: room.peers.length === 1,
+            term: group.term,
+          });
         }
         return;
       }
       case "member": {
         this.settle();
         const group = room.groups.find((g) => g.groupId === me.groupId);
-        if (group) this.setView({ kind: "member", groupId: group.groupId, hostId: group.hostId });
+        if (group) {
+          this.setView({ kind: "member", groupId: group.groupId, hostId: group.hostId, term: group.term });
+          this.confirm();
+        }
         return;
       }
       case "joining":
@@ -141,6 +160,7 @@ export class Joiner {
   /** A link opened or closed; a merge may now be complete. */
   onLinksChanged(): void {
     this.checkMerge();
+    this.confirm();
   }
 
   /** A server error. The only request that can fail while I wait is a merge commit: treat it as rejected and start over. */
@@ -149,6 +169,45 @@ export class Joiner {
     this.committing = false;
     this.attempted.clear();
     this.onRoom(this.room);
+  }
+
+  /**
+   * Tells the server I reach my current host in its current term: at once if I
+   * hold a link to it, otherwise after dialing it (a new host after
+   * succession). A failed dial sends nothing; the server's confirm window decides.
+   */
+  private confirm(): void {
+    const view = this.view;
+    if (view.kind !== "member") return;
+    const key = `${view.groupId}:${view.term}`;
+    if (this.confirmed === key) return;
+    if (this.deps.linked().has(view.hostId)) {
+      this.abortConfirm();
+      this.confirmed = key;
+      this.deps.send({ t: "confirm", groupId: view.groupId, term: view.term });
+      return;
+    }
+    if (this.confirmDial?.key === key) return;
+    this.abortConfirm();
+    const controller = new AbortController();
+    const dial = { key, controller };
+    this.confirmDial = dial;
+    const timer = setTimeout(() => controller.abort(), this.timeoutMs);
+    const done = (ok: boolean) => {
+      clearTimeout(timer);
+      if (this.confirmDial !== dial) return;
+      this.confirmDial = null;
+      if (ok) this.confirm();
+    };
+    this.deps.dial(view.hostId, controller.signal).then(
+      () => done(true),
+      () => done(false),
+    );
+  }
+
+  private abortConfirm(): void {
+    this.confirmDial?.controller.abort();
+    this.confirmDial = null;
   }
 
   private busy(): boolean {

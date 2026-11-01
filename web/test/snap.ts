@@ -1,7 +1,7 @@
 import type { PeerStatus, RoomSnapshot } from "../../server/src/protocol";
 import type { Device } from "../../server/src/roomKey";
 
-export type P = { id: string; status: PeerStatus; group?: string; device?: Device };
+export type P = { id: string; status: PeerStatus; group?: string; device?: Device; term?: number };
 
 /** Peers in join order; a host's `group` is its groupId, a member's `group` points at one. */
 export function snap(...peers: P[]): RoomSnapshot {
@@ -12,7 +12,7 @@ export function snap(...peers: P[]): RoomSnapshot {
       .map((h) => ({
         groupId: h.group!,
         hostId: h.id,
-        term: 1,
+        term: h.term ?? 1,
         members: peers.filter((p) => p.status === "member" && p.group === h.group).map((p) => p.id),
       })),
   };

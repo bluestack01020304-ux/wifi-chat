@@ -39,14 +39,14 @@ describe("host", () => {
   it("host on welcome, alone in room", () => {
     const { j, sent } = harness();
     j.onWelcome("me", snap({ id: "me", status: "host", group: "g9" }));
-    expect(j.view).toEqual({ kind: "host", groupId: "g9", members: [], aloneInRoom: true });
+    expect(j.view).toEqual({ kind: "host", groupId: "g9", members: [], aloneInRoom: true, term: 1 });
     expect(sent).toEqual([]);
   });
 
   it("host with members is not alone", () => {
     const { j } = harness();
     j.onWelcome("me", snap({ id: "me", status: "host", group: "g9" }, { id: "x", status: "member", group: "g9" }));
-    expect(j.view).toEqual({ kind: "host", groupId: "g9", members: ["x"], aloneInRoom: false });
+    expect(j.view).toEqual({ kind: "host", groupId: "g9", members: ["x"], aloneInRoom: false, term: 1 });
   });
 });
 
@@ -151,7 +151,7 @@ describe("joining", () => {
     j.onWelcome("me", snap(h1, meJoining));
     await settle("h1", true);
     j.onRoom(snap(h1, { id: "me", status: "member", group: "g1" }));
-    expect(j.view).toEqual({ kind: "member", groupId: "g1", hostId: "h1" });
+    expect(j.view).toEqual({ kind: "member", groupId: "g1", hostId: "h1", term: 1 });
   });
 });
 
@@ -243,7 +243,7 @@ describe("bridge merge", () => {
     await settle("h1", true);
     await settle("h2", true);
     j.onRoom(snap({ id: "me", status: "host", group: "g8" }, { ...h1, status: "member", group: "g8" }, { ...h2, status: "member", group: "g8" }));
-    expect(j.view).toEqual({ kind: "host", groupId: "g8", members: ["h1", "h2"], aloneInRoom: false });
+    expect(j.view).toEqual({ kind: "host", groupId: "g8", members: ["h1", "h2"], aloneInRoom: false, term: 1 });
   });
 
   it("merge request makes a member dial the bridge", async () => {
@@ -347,5 +347,101 @@ describe("startAlone and events", () => {
     j.onWelcome("me", snap(h1, meJoining));
     j.onRoom(snap(h1, meJoining));
     expect(views).toEqual([{ kind: "connecting" }]);
+  });
+});
+
+describe("succession", () => {
+  const meMember = (group = "g1"): P => ({ id: "me", status: "member", group });
+
+  it("views carry the term", () => {
+    const { j } = harness();
+    j.onWelcome("me", snap({ id: "me", status: "host", group: "g9", term: 4 }));
+    expect(j.view).toMatchObject({ kind: "host", term: 4 });
+  });
+
+  it("member confirms when linked to its host", async () => {
+    const { j, sent, settle } = harness();
+    j.onWelcome("me", snap(h1, meJoining));
+    await settle("h1", true);
+    sent.length = 0;
+    j.onRoom(snap(h1, meMember()));
+    expect(sent).toEqual([{ t: "confirm", groupId: "g1", term: 1 }]);
+  });
+
+  it("confirm is sent once per term", async () => {
+    const { j, sent, settle } = harness();
+    j.onWelcome("me", snap(h1, meJoining));
+    await settle("h1", true);
+    sent.length = 0;
+    j.onRoom(snap(h1, meMember()));
+    j.onRoom(snap(h1, meMember()));
+    j.onLinksChanged();
+    expect(sent).toHaveLength(1);
+  });
+
+  it("member dials a new host after succession and confirms", async () => {
+    const { j, sent, dial, settle } = harness();
+    j.onWelcome("me", snap(h1, meJoining));
+    await settle("h1", true);
+    j.onRoom(snap(h1, meMember()));
+    sent.length = 0;
+    dial.mockClear();
+    // h1 is gone; h2 now hosts g1 with term 2.
+    j.onRoom(snap({ id: "h2", status: "host", group: "g1", term: 2 }, meMember()));
+    expect(dial.mock.calls.map((c) => c[0])).toEqual(["h2"]);
+    expect(sent).toEqual([]);
+    await settle("h2", true);
+    expect(sent).toEqual([{ t: "confirm", groupId: "g1", term: 2 }]);
+    expect(j.view).toMatchObject({ kind: "member", hostId: "h2", term: 2 });
+  });
+
+  it("a newer term aborts the older confirm dial", async () => {
+    const { j, sent, calls, settle } = harness();
+    j.onWelcome("me", snap(h1, meJoining));
+    await settle("h1", true);
+    j.onRoom(snap(h1, meMember()));
+    sent.length = 0;
+    j.onRoom(snap({ id: "h2", status: "host", group: "g1", term: 2 }, meMember()));
+    j.onRoom(snap({ id: "h3", status: "host", group: "g1", term: 3 }, meMember()));
+    expect(calls.find((c) => c.hostId === "h2")!.signal.aborted).toBe(true);
+    await settle("h3", true);
+    expect(sent).toEqual([{ t: "confirm", groupId: "g1", term: 3 }]);
+  });
+
+  it("a failed confirm dial sends nothing and leaves the decision to the server", async () => {
+    const { j, sent, settle } = harness();
+    j.onWelcome("me", snap(h1, meJoining));
+    await settle("h1", true);
+    j.onRoom(snap(h1, meMember()));
+    sent.length = 0;
+    j.onRoom(snap({ id: "h2", status: "host", group: "g1", term: 2 }, meMember()));
+    await settle("h2", false);
+    expect(sent).toEqual([]);
+  });
+
+  it("demotion calls onDemoted before rejoining", () => {
+    const sent: ClientMessage[] = [];
+    const order: string[] = [];
+    const j = new Joiner({
+      send: (m) => sent.push(m),
+      dial: () => {
+        order.push("dial");
+        return new Promise(() => {});
+      },
+      device: "mobile",
+      linked: () => new Set(),
+      onDemoted: () => order.push("demoted"),
+    });
+    j.onWelcome("me", snap({ id: "me", status: "host", group: "g9" }, { id: "x", status: "member", group: "g9" }));
+    j.onRoom(snap({ id: "x", status: "host", group: "g9", term: 2 }, meJoining));
+    expect(order).toEqual(["demoted", "dial"]);
+  });
+
+  it("a merged host becoming a member is not a demotion", () => {
+    const onDemoted = vi.fn();
+    const j = new Joiner({ send: () => {}, dial: () => new Promise(() => {}), device: "mobile", linked: () => new Set(["n"]), onDemoted });
+    j.onWelcome("me", snap({ id: "me", status: "host", group: "g9" }));
+    j.onRoom(snap({ id: "n", status: "host", group: "g7", term: 2 }, { id: "me", status: "member", group: "g7" }));
+    expect(onDemoted).not.toHaveBeenCalled();
   });
 });

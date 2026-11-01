@@ -42,8 +42,8 @@ function setup() {
   return { s, history, channels, ch };
 }
 
-const host = (members: string[]) => ({ kind: "host" as const, groupId: "g", members, aloneInRoom: false });
-const member = (hostId: string) => ({ kind: "member" as const, groupId: "g", hostId });
+const host = (members: string[]) => ({ kind: "host" as const, groupId: "g", members, aloneInRoom: false, term: 1 });
+const member = (hostId: string) => ({ kind: "member" as const, groupId: "g", hostId, term: 1 });
 
 describe("ChatSession", () => {
   it("host attaches member channels and relays", () => {
