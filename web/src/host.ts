@@ -1,9 +1,11 @@
 import type { Sdp } from "../../server/src/protocol";
 import { DIAL_TIMEOUT_MS } from "./joiner";
+import type { Links } from "./links";
 import {
   type Connection,
   newPeerConnection,
   type OnConnected,
+  register,
   remoteDescription,
   verifyPath,
   waitForGathering,
@@ -11,21 +13,23 @@ import {
 } from "./peer";
 import type { Signaling } from "./signaling";
 
-/** Answerer side: a group host accepts offers, one RTCPeerConnection per remote peer. */
-export function createHost(sig: Signaling, onConnected: OnConnected) {
-  const connections = new Map<string, Connection>();
+/**
+ * Answerer side: accepts offers in every state (a host from joiners, an
+ * unattached peer or a bridge from anyone pulling it in). A new offer from a
+ * peer replaces its in-flight one; the shared Links decides which live
+ * connection survives.
+ */
+export function createHost(sig: Signaling, links: Links<Connection>, onConnected: OnConnected) {
   const inFlight = new Map<string, RTCPeerConnection>();
 
   const drop = (peerId: string, pc: RTCPeerConnection) => {
     pc.close();
-    if (connections.get(peerId)?.pc === pc) connections.delete(peerId);
     if (inFlight.get(peerId) === pc) inFlight.delete(peerId);
   };
 
   async function onOffer(from: string, sdp: Sdp): Promise<void> {
     if (sdp.type !== "offer") return;
-    // A retry replaces whatever we had for this peer.
-    const old = connections.get(from)?.pc ?? inFlight.get(from);
+    const old = inFlight.get(from);
     if (old) drop(from, old);
 
     const pc = newPeerConnection();
@@ -52,12 +56,8 @@ export function createHost(sig: Signaling, onConnected: OnConnected) {
         return;
       }
       inFlight.delete(from);
-      const conn = { pc, dc, path };
-      connections.set(from, conn);
-      pc.addEventListener("connectionstatechange", () => {
-        if (pc.connectionState === "failed" || pc.connectionState === "closed") drop(from, pc);
-      });
-      onConnected(from, conn);
+      const conn = register(links, from, pc, dc, path, false);
+      if (links.get(from) === conn) onConnected(from, conn);
     } catch {
       drop(from, pc);
     } finally {
@@ -65,10 +65,5 @@ export function createHost(sig: Signaling, onConnected: OnConnected) {
     }
   }
 
-  function closeAll(): void {
-    for (const [id, c] of connections) drop(id, c.pc);
-    for (const [id, pc] of inFlight) drop(id, pc);
-  }
-
-  return { onOffer, connections, closeAll };
+  return { onOffer };
 }

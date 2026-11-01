@@ -1,5 +1,6 @@
 import type { Sdp } from "../../server/src/protocol";
 import type { Dial } from "./joiner";
+import type { Links } from "./links";
 import { checkSelectedPair, type PairResult, type StatLike } from "./pairCheck";
 import { keepHostCandidatesOnly } from "./sdp";
 import type { Signaling } from "./signaling";
@@ -10,6 +11,8 @@ export interface Connection {
   pc: RTCPeerConnection;
   dc: RTCDataChannel;
   path: Extract<PairResult, { ok: true }>;
+  dialedByMe: boolean;
+  close(): void;
 }
 export type OnConnected = (peerId: string, c: Connection) => void;
 
@@ -51,6 +54,17 @@ export async function verifyPath(pc: RTCPeerConnection): Promise<PairResult> {
   return checkSelectedPair([...report.values()] as StatLike[]);
 }
 
+/** Registers a verified connection; it leaves the registry by itself when it fails or closes. */
+export function register(links: Links<Connection>, peerId: string, pc: RTCPeerConnection, dc: RTCDataChannel, path: Connection["path"], dialedByMe: boolean): Connection {
+  const conn: Connection = { pc, dc, path, dialedByMe, close: () => pc.close() };
+  pc.addEventListener("connectionstatechange", () => {
+    if (pc.connectionState === "failed" || pc.connectionState === "closed") links.remove(peerId, conn);
+  });
+  dc.addEventListener("close", () => links.remove(peerId, conn));
+  links.add(peerId, conn);
+  return conn;
+}
+
 export function remoteDescription(sdp: Sdp): RTCSessionDescriptionInit {
   return { type: sdp.type, sdp: keepHostCandidatesOnly(sdp.sdp).sdp };
 }
@@ -63,10 +77,9 @@ function abortable<T>(p: Promise<T>, signal: AbortSignal): Promise<T> {
   });
 }
 
-/** Offerer side: dials a group host through the signaling server. */
-export function createDialer(sig: Signaling, onConnected: OnConnected) {
+/** Offerer side: dials a peer through the signaling server. A dial resolves once the peer is reachable, even if glare keeps the other connection. */
+export function createDialer(sig: Signaling, links: Links<Connection>, onConnected: OnConnected) {
   const pendingAnswers = new Map<string, (sdp: Sdp) => void>();
-  const connections = new Map<string, Connection>();
 
   const dial: Dial = async (hostId, signal) => {
     const pc = newPeerConnection();
@@ -89,10 +102,8 @@ export function createDialer(sig: Signaling, onConnected: OnConnected) {
       if (!path.ok) throw new Error(path.reason);
       if (signal.aborted) throw new Error("aborted");
       signal.removeEventListener("abort", abort);
-      const conn = { pc, dc, path };
-      connections.get(hostId)?.pc.close();
-      connections.set(hostId, conn);
-      onConnected(hostId, conn);
+      const conn = register(links, hostId, pc, dc, path, true);
+      if (links.get(hostId) === conn) onConnected(hostId, conn);
     } catch (e) {
       abort();
       throw e;
@@ -104,5 +115,5 @@ export function createDialer(sig: Signaling, onConnected: OnConnected) {
     if (sdp.type === "answer") pendingAnswers.get(from)?.(sdp);
   };
 
-  return { dial, onAnswer, connections };
+  return { dial, onAnswer };
 }

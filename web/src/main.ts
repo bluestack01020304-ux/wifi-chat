@@ -2,6 +2,7 @@ import "./style.css";
 import { detectDevice, signalUrl } from "./config";
 import { createHost } from "./host";
 import { Joiner, type View } from "./joiner";
+import { Links } from "./links";
 import { createDialer, type Connection } from "./peer";
 import { Signaling } from "./signaling";
 
@@ -61,13 +62,16 @@ function onConnected(_peerId: string, c: Connection): void {
 const page = new URL(location.href);
 const device = detectDevice(navigator.userAgent, matchMedia("(pointer: fine)").matches);
 const sig = new Signaling(signalUrl(page, device));
-const dialer = createDialer(sig, onConnected);
-const host = createHost(sig, onConnected);
+let myId = "";
+const links = new Links<Connection>(() => myId);
+const dialer = createDialer(sig, links, onConnected);
+const host = createHost(sig, links, onConnected);
 const joiner = new Joiner({ send: (m) => sig.send(m), dial: dialer.dial });
 
 sig.onMessage((m) => {
   switch (m.t) {
     case "welcome":
+      myId = m.peerId;
       joiner.onWelcome(m.peerId, m.room);
       break;
     case "room":
@@ -86,8 +90,5 @@ sig.onClose(() => {
   socketClosed = true;
   render(joiner.view);
 });
-joiner.onChange((v) => {
-  if (v.kind !== "host") host.closeAll();
-  render(v);
-});
+joiner.onChange((v) => render(v));
 render(joiner.view);
