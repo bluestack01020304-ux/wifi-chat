@@ -23,6 +23,7 @@ interface Attempt {
 
 interface Merge {
   groups: string[];
+  unattached: string[];
   timer: ReturnType<typeof setTimeout>;
 }
 
@@ -151,8 +152,22 @@ export class Joiner {
   }
 
   private busy(): boolean {
+    if (this.merge && this.mergeOvertaken(this.merge)) {
+      // Someone else rebuilt the groups I was merging: start over from the current room.
+      clearTimeout(this.merge.timer);
+      this.merge = null;
+      this.attempted.clear();
+      this.start(this.myStatus() === "joining");
+    }
     if (this.merge) this.checkMerge();
     return !!(this.attempt || this.merge || this.committing);
+  }
+
+  /** A planned group is gone, or a planned unattached peer settled elsewhere. */
+  private mergeOvertaken(merge: Merge): boolean {
+    const groupGone = merge.groups.some((id) => !this.room.groups.some((g) => g.groupId === id));
+    const pulledAway = merge.unattached.some((id) => this.room.peers.find((p) => p.peerId === id)?.status !== "unattached");
+    return groupGone || pulledAway;
   }
 
   /** I am settled in a group: drop every in-progress join state. */
@@ -221,7 +236,7 @@ export class Joiner {
       case "merge":
         this.deps.send({ t: "merge-start", groups: plan.groups, unattached: plan.unattached });
         this.setView({ kind: "connecting" });
-        this.merge = { groups: plan.groups, timer: setTimeout(() => this.finishMerge(), this.mergeTimeoutMs) };
+        this.merge = { groups: plan.groups, unattached: plan.unattached, timer: setTimeout(() => this.finishMerge(), this.mergeTimeoutMs) };
         this.checkMerge();
         return;
     }

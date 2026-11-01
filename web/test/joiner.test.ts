@@ -212,6 +212,31 @@ describe("bridge merge", () => {
     expect(dial.mock.calls.map((c) => c[0])).toEqual(["n2"]);
   });
 
+  it("another bridge committing during my merge phase makes me redial", async () => {
+    const { j, sent, dial, settle } = harness();
+    j.onWelcome("me", snap(h1, x, h2, meJoining));
+    await settle("h1", true);
+    await settle("h2", true);
+    expect(sent).toEqual([{ t: "merge-start", groups: ["g1", "g2"], unattached: [] }]);
+    dial.mockClear();
+    const n: P = { id: "n", status: "host", group: "g9" };
+    j.onRoom(snap(n, { ...h1, status: "member", group: "g9" }, { ...x, group: "g9" }, h2, meJoining));
+    expect(dial.mock.calls.map((c) => c[0])).toEqual(["n", "h2"]);
+    expect(sent).toEqual([{ t: "merge-start", groups: ["g1", "g2"], unattached: [] }]);
+    expect(j.view).toEqual({ kind: "connecting" });
+  });
+
+  it("a pulled unattached peer settling elsewhere makes me redial", async () => {
+    const { j, sent, dial, settle } = harness();
+    j.onWelcome("me", snap(h1, x, u, meJoining));
+    await settle("h1", true);
+    await settle("u", true);
+    dial.mockClear();
+    j.onRoom(snap(h1, x, { ...u, status: "member", group: "g1" }, meJoining));
+    expect(dial.mock.calls.map((c) => c[0])).toEqual(["h1"]);
+    expect(sent).toEqual([{ t: "merge-start", groups: ["g1"], unattached: ["u"] }]);
+  });
+
   it("becoming host ends the merge", async () => {
     const { j, settle } = harness();
     j.onWelcome("me", snap(h1, h2, meJoining));
