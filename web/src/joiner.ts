@@ -163,10 +163,15 @@ export class Joiner {
     this.confirm();
   }
 
-  /** A server error. The only request that can fail while I wait is a merge commit: treat it as rejected and start over. */
+  /**
+   * A server error. While I wait on a merge commit or a join, it means that
+   * request was refused (the room changed under me): start over from the
+   * current snapshot.
+   */
   onError(_code: ErrorCode): void {
-    if (!this.committing) return;
+    if (!this.committing && !this.pendingGroup) return;
     this.committing = false;
+    this.pendingGroup = null;
     this.attempted.clear();
     this.onRoom(this.room);
   }
@@ -322,9 +327,11 @@ export class Joiner {
     else this.fail(this.myStatus() === "joining");
   }
 
+  /** Names the host I reached, so the server refuses the join if that group changed hosts meanwhile. */
   private join(groupId: string): void {
+    const hostId = this.room.groups.find((g) => g.groupId === groupId)?.hostId;
     this.pendingGroup = groupId;
-    this.deps.send({ t: "joined", groupId });
+    this.deps.send(hostId ? { t: "joined", groupId, hostId } : { t: "joined", groupId });
   }
 
   private fail(report: boolean): void {

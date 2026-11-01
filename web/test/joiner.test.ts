@@ -79,7 +79,7 @@ describe("joining", () => {
     j.onWelcome("me", snap(h1, h2, meJoining));
     await settle("h2", false);
     await settle("h1", true);
-    expect(sent).toEqual([{ t: "joined", groupId: "g1" }]);
+    expect(sent).toEqual([{ t: "joined", groupId: "g1", hostId: "h1" }]);
     expect(calls.find((c) => c.hostId === "h1")!.signal.aborted).toBe(false);
   });
 
@@ -88,7 +88,7 @@ describe("joining", () => {
     j.onWelcome("me", snap(h1, h2, meJoining));
     await settle("h1", true);
     await vi.advanceTimersByTimeAsync(DIAL_TIMEOUT_MS);
-    expect(sent).toEqual([{ t: "joined", groupId: "g1" }]);
+    expect(sent).toEqual([{ t: "joined", groupId: "g1", hostId: "h1" }]);
     expect(calls.find((c) => c.hostId === "h2")!.signal.aborted).toBe(true);
     expect(calls.find((c) => c.hostId === "h1")!.signal.aborted).toBe(false);
   });
@@ -98,7 +98,7 @@ describe("joining", () => {
     j.onWelcome("me", snap(h1, { ...h2, device: "desktop" }, meJoining));
     await settle("h1", true);
     await settle("h2", true);
-    expect(sent).toEqual([{ t: "joined", groupId: "g2" }]);
+    expect(sent).toEqual([{ t: "joined", groupId: "g2", hostId: "h2" }]);
   });
 
   it("all fail means unattached", async () => {
@@ -185,7 +185,7 @@ describe("bridge merge", () => {
     await settle("h1", true);
     await settle("h2", true);
     await vi.advanceTimersByTimeAsync(MERGE_TIMEOUT_MS);
-    expect(sent.slice(1)).toEqual([{ t: "joined", groupId: "g1" }]);
+    expect(sent.slice(1)).toEqual([{ t: "joined", groupId: "g1", hostId: "h1" }]);
   });
 
   it("merge timeout commits the unattached it pulled", async () => {
@@ -443,5 +443,20 @@ describe("succession", () => {
     j.onWelcome("me", snap({ id: "me", status: "host", group: "g9" }));
     j.onRoom(snap({ id: "n", status: "host", group: "g7", term: 2 }, { id: "me", status: "member", group: "g7" }));
     expect(onDemoted).not.toHaveBeenCalled();
+  });
+});
+
+describe("refused join", () => {
+  it("a refused joined redials from the current snapshot", async () => {
+    const { j, sent, dial, settle } = harness();
+    j.onWelcome("me", snap(h1, { id: "h2", status: "member", group: "g1" }, meJoining));
+    await settle("h1", true);
+    expect(sent).toEqual([{ t: "joined", groupId: "g1", hostId: "h1" }]);
+    dial.mockClear();
+    // h1 left; h2 took g1 over before my joined arrived, so the server refused it.
+    j.onRoom(snap({ id: "h2", status: "host", group: "g1", term: 2 }, meJoining));
+    expect(dial).not.toHaveBeenCalled();
+    j.onError("no-such-group");
+    expect(dial.mock.calls.map((c) => c[0])).toEqual(["h2"]);
   });
 });

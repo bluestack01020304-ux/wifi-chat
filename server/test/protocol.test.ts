@@ -73,3 +73,10 @@ describe("succession messages", () => {
     }
   });
 });
+
+describe("joined with the host I reached", () => {
+  it("keeps an optional hostId", () => {
+    expect(parseClientMessage(JSON.stringify({ t: "joined", groupId: "g1", hostId: "h1" }))).toEqual({ t: "joined", groupId: "g1", hostId: "h1" });
+    expect(parseClientMessage(JSON.stringify({ t: "joined", groupId: "g1", hostId: "" }))).toEqual({ error: "bad-message" });
+  });
+});

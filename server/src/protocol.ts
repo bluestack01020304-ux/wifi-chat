@@ -39,7 +39,7 @@ export interface Sdp {
 
 export type ClientMessage =
   | { t: "signal"; to: string; sdp: Sdp }
-  | { t: "joined"; groupId: string }
+  | { t: "joined"; groupId: string; hostId?: string }
   | { t: "unattached" }
   | { t: "start-alone" }
   | { t: "merge-start"; groups: string[]; unattached: string[] }
@@ -94,7 +94,9 @@ export function parseClientMessage(raw: string | ArrayBuffer): ClientMessage | {
       return ok ? { t: "confirm", groupId: v.groupId as string, term: term as number } : { error: "bad-message" };
     }
     case "joined":
-      return isId(v.groupId) ? { t: "joined", groupId: v.groupId } : { error: "bad-message" };
+      if (!isId(v.groupId)) return { error: "bad-message" };
+      if (v.hostId === undefined) return { t: "joined", groupId: v.groupId };
+      return isId(v.hostId) ? { t: "joined", groupId: v.groupId, hostId: v.hostId } : { error: "bad-message" };
     case "signal": {
       const sdp = parseSdp(v.sdp);
       return isId(v.to) && sdp ? { t: "signal", to: v.to, sdp } : { error: "bad-message" };

@@ -221,12 +221,15 @@ describe("succession alarm", () => {
   const stubFor = (room: string) =>
     env.ROOMS.get(env.ROOMS.idFromName(roomKeyString("203.0.113.5", { room, mode: "family", key: null, device: "mobile" })));
 
-  it("a joined host schedules an alarm", async () => {
+  it("an alarm is scheduled only once a host has somebody to hand over to", async () => {
     const room = freshRoom();
     await (await connect("203.0.113.5", `?room=${room}`)).nextOf("welcome");
     await settle();
-    const alarm = await runInDurableObject(stubFor(room), (_i: Room, state) => state.storage.getAlarm());
-    expect(alarm).not.toBeNull();
+    const getAlarm = () => runInDurableObject(stubFor(room), (_i: Room, state) => state.storage.getAlarm());
+    expect(await getAlarm()).toBeNull();
+    await (await connect("203.0.113.5", `?room=${room}`)).nextOf("welcome");
+    await settle();
+    expect(await getAlarm()).not.toBeNull();
   });
 
   it("alarm runs succession for a silent host", async () => {

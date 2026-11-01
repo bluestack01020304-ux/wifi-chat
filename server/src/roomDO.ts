@@ -12,7 +12,8 @@ export const TICK_MS = 1000;
  * keeps no room state in instance fields: every event rebuilds RoomState
  * from the per-socket attachments, so a hibernated object wakes up intact.
  * No room state is written to storage, and IPs never reach this object; the
- * only stored thing is the alarm that drives succession while a host exists.
+ * only stored thing is the alarm that drives succession while a host has
+ * somebody to hand over to (two or more peers in the room).
  */
 export class Room extends DurableObject {
   async fetch(request: Request): Promise<Response> {
@@ -43,10 +44,10 @@ export class Room extends DurableObject {
     this.apply((state) => state.handle(peerId, msg, Date.now()));
   }
 
-  /** Runs host timeouts and confirm windows, then keeps ticking while a host exists. */
+  /** Runs host timeouts and confirm windows, then keeps ticking while they matter. */
   async alarm(): Promise<void> {
-    const hasHost = this.apply((state) => state.tick(Date.now()), undefined, undefined, false);
-    if (hasHost) await this.ctx.storage.setAlarm(Date.now() + TICK_MS);
+    const needsTicks = this.apply((state) => state.tick(Date.now()), undefined, undefined, false);
+    if (needsTicks) await this.ctx.storage.setAlarm(Date.now() + TICK_MS);
   }
 
   async webSocketClose(ws: WebSocket, code: number): Promise<void> {
@@ -98,9 +99,9 @@ export class Room extends DurableObject {
       const ws = sockets.get(to);
       if (ws) safeSend(ws, msg);
     }
-    const hasHost = state.hasHost();
-    if (hasHost && schedule) void this.ensureAlarm();
-    return hasHost;
+    const needsTicks = state.needsTicks();
+    if (needsTicks && schedule) void this.ensureAlarm();
+    return needsTicks;
   }
 
   private async ensureAlarm(): Promise<void> {

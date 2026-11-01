@@ -90,12 +90,17 @@ const joiner = new Joiner({
   onDemoted: () => links.close(links.ids()),
 });
 
-/** Spec: a host tells the server it is alive every second; 2 s of silence hands the group on. */
+/**
+ * Spec: a host tells the server it is alive every second; 2 s of silence hands the group on.
+ * Alone in the room there is nobody to hand over to, so the server never times me out and
+ * I send nothing: an idle single tab must not wake the server every second.
+ */
 const HEARTBEAT_MS = 1000;
 // Dev-only test hook: `window.__muteHeartbeat = true` stalls this host to exercise demotion. Stripped from production builds.
 const muted = () => import.meta.env.DEV && (globalThis as { __muteHeartbeat?: boolean }).__muteHeartbeat === true;
 setInterval(() => {
-  if (!socketClosed && !muted() && joiner.view.kind === "host") sig.send({ t: "heartbeat" });
+  const view = joiner.view;
+  if (!socketClosed && !muted() && view.kind === "host" && !view.aloneInRoom) sig.send({ t: "heartbeat" });
 }, HEARTBEAT_MS);
 
 // Chat: nickname and history live in memory only (closing every tab ends the conversation).

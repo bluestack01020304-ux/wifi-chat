@@ -407,3 +407,62 @@ describe("succession", () => {
     expect(s.hasHost()).toBe(true);
   });
 });
+
+describe("review fixes", () => {
+  const rec = (
+    peerId: string,
+    status: PeerRecord["status"],
+    groupId: string | null,
+    joinedAt: number,
+    device: PeerRecord["device"] = "mobile",
+  ): PeerRecord => ({
+    peerId, device, status, groupId, term: status === "host" ? 1 : 0, joinedAt, signalWindow: 0, signals: 0,
+    lastBeat: 0, windowEnd: 0, tried: status === "host" ? [peerId] : [], confirmedTerm: 0,
+  });
+  const hostOf = (s: RoomState) => s.snapshot().groups[0];
+
+  it("a demoted host that rejoined is a candidate again", () => {
+    const s = new RoomState([rec("L", "host", "A", 1, "desktop"), rec("P", "member", "A", 2)], ids);
+    s.tick(HOST_TIMEOUT_MS + 1); // L stalls → P hosts term 2, L demoted
+    expect(hostOf(s)).toMatchObject({ hostId: "P", term: 2 });
+    s.handle("L", { t: "joined", groupId: "A" }, 3000);
+    s.handle("L", { t: "confirm", groupId: "A", term: 2 }, 3000);
+    s.tick(3000 + HOST_TIMEOUT_MS + 1); // P stalls → L must take over, not dissolve
+    expect(hostOf(s)).toMatchObject({ hostId: "L", term: 3 });
+  });
+
+  it("desktop first still holds after a settled succession", () => {
+    const s = new RoomState([rec("L", "host", "A", 1, "desktop"), rec("P", "member", "A", 2), rec("Q", "member", "A", 3)], ids);
+    s.tick(HOST_TIMEOUT_MS + 1); // L stalls → P hosts term 2 with a window
+    s.handle("L", { t: "joined", groupId: "A" }, 2500);
+    s.handle("L", { t: "confirm", groupId: "A", term: 2 }, 2500);
+    s.handle("Q", { t: "confirm", groupId: "A", term: 2 }, 2500);
+    s.handle("P", { t: "heartbeat" }, 7000);
+    s.tick(HOST_TIMEOUT_MS + 1 + CONFIRM_WINDOW_MS); // window ends, settled
+    s.tick(7000 + HOST_TIMEOUT_MS + 1); // P stalls
+    expect(hostOf(s)).toMatchObject({ hostId: "L", term: 3 });
+  });
+
+  it("a lone peer is never timed out", () => {
+    const s = new RoomState([rec("a", "host", "A", 1)], ids);
+    expect(s.tick(60_000)).toEqual([]);
+    expect(s.needsTicks()).toBe(false);
+  });
+
+  it("a second peer arriving gives a silent lone host a fresh 2 s", () => {
+    const s = new RoomState([rec("a", "host", "A", 1)], ids);
+    s.join("b", "mobile", 60_000);
+    expect(s.needsTicks()).toBe(true);
+    expect(s.tick(60_000 + HOST_TIMEOUT_MS)).toEqual([]);
+    expect(s.tick(60_000 + HOST_TIMEOUT_MS + 1)).not.toEqual([]);
+  });
+
+  it("joined to a group whose host changed is refused", () => {
+    const s = new RoomState([rec("h1", "host", "A", 1), rec("h2", "member", "A", 2), rec("j", "joining", null, 3)], ids);
+    s.leave("h1", 100); // h2 hosts A now
+    expect(s.handle("j", { t: "joined", groupId: "A", hostId: "h1" }, 200)[0].msg).toMatchObject({ code: "no-such-group" });
+    expect(statusOf(s, "j")).toMatchObject({ status: "joining" });
+    s.handle("j", { t: "joined", groupId: "A", hostId: "h2" }, 300);
+    expect(statusOf(s, "j")).toMatchObject({ status: "member", groupId: "A" });
+  });
+});

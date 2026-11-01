@@ -91,6 +91,7 @@ export class RoomState {
 
   join(peerId: string, device: Device, now: number): Outgoing[] {
     const hasHost = [...this.peers.values()].some((r) => r.status === "host");
+    if (this.peers.size === 1) for (const r of this.peers.values()) if (r.status === "host") r.lastBeat = now;
     const record: PeerRecord = {
       peerId, device, status: "joining", groupId: null, term: 0, joinedAt: now, signalWindow: now, signals: 0,
       lastBeat: 0, windowEnd: 0, tried: [], confirmedTerm: 0,
@@ -120,7 +121,10 @@ export class RoomState {
 
       case "joined": {
         if (!waiting) return error(peerId, "bad-state", "only a waiting peer can join a group");
-        if (!this.hostOf(msg.groupId)) return error(peerId, "no-such-group", "no such group in this room");
+        const host = this.hostOf(msg.groupId);
+        if (!host || (msg.hostId !== undefined && msg.hostId !== host.peerId)) {
+          return error(peerId, "no-such-group", "no such group in this room");
+        }
         me.status = "member";
         me.groupId = msg.groupId;
         return this.broadcast();
@@ -189,8 +193,18 @@ export class RoomState {
     return [...this.peers.values()].some((r) => r.status === "host");
   }
 
+  /**
+   * Whether succession timers matter. A peer alone in its room has nobody to
+   * hand over to, so it is never timed out and sends no heartbeat; that keeps
+   * an idle single-tab room from waking the server every second.
+   */
+  needsTicks(): boolean {
+    return this.peers.size >= 2 && this.hasHost();
+  }
+
   /** Runs host timeouts and confirm-window ends. Returns a room broadcast if anything changed. */
   tick(now: number): Outgoing[] {
+    if (this.peers.size < 2) return [];
     let changed = false;
     for (const host of [...this.peers.values()].filter((r) => r.status === "host")) {
       if (now - host.lastBeat > HOST_TIMEOUT_MS) {
@@ -227,8 +241,9 @@ export class RoomState {
     next.status = "host";
     next.term = term + 1;
     next.lastBeat = now;
-    next.tried = [...tried, next.peerId];
-    next.windowEnd = members.length > 1 ? now + CONFIRM_WINDOW_MS : 0;
+    const window = members.length > 1;
+    next.tried = window ? [...tried, next.peerId] : [next.peerId];
+    next.windowEnd = window ? now + CONFIRM_WINDOW_MS : 0;
   }
 
   private endWindow(host: PeerRecord, now: number): void {
@@ -244,6 +259,7 @@ export class RoomState {
       return;
     }
     for (const r of members) if (r.confirmedTerm !== host.term) this.demote(r);
+    host.tried = [host.peerId];
   }
 
   /** Back to the start of the join flow. */
