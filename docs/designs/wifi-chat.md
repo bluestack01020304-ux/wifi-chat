@@ -112,7 +112,7 @@ Mode: Builder
 ## Open Questions
 - mDNS host 후보만으로 폰↔노트북, 폰↔폰 연결이 대상 브라우저(Android Chrome, iOS Safari, 데스크톱 Chrome)에서 되는가? 안 되면 해당 환경은 Approach A(로컬 서버 프로그램)로 보완한다.
 - 회사 Wi-Fi에서 직접 연결이 되는가? 안 되면 회사 장면은 Approach A로 보완한다.
-- Cloudflare Workers에서 IPv4 전용 호스트명을 만들 수 있는가? 안 되면 IPv4 전용 호스트에 아주 작은 키 발급 엔드포인트를 따로 둔다.
+- Cloudflare Workers에서 IPv4 전용 호스트명을 만들 수 있는가? 안 되면 IPv4 전용 호스트에 아주 작은 키 발급 엔드포인트를 따로 둔다. (2026-11-01: workers.dev는 듀얼스택. 집 Wi-Fi에서는 모든 기기가 IPv4라 문제없음. 도메인 없이 보류 — 아래 Signaling Deploy Results 참고.)
 - 별 모양 중계에서 호스트 폰이 감당하는 인원은 몇 명인가? (목표: 10명)
 - 익명 모드에서 장난이나 욕설을 막을 최소한의 수단이 필요한가? (예: 방 투표로 일시 숨김)
 
@@ -123,6 +123,12 @@ Mode: Builder
 - iOS Safari: **미확인**.
 - 회사 Wi-Fi: **미확인**. 다음 출근일에 시험한다.
 - 결정(2026-11-01): 남은 항목은 미확인으로 두고 Next Steps 2(중개 서버)로 진행한다.
+
+## Signaling Deploy Results (Next Steps 2, `server/`)
+- 2026-11-01 배포: `https://wifi-chat-signal.wifi-chat-signal.workers.dev` (WebSocket `/ws`).
+- workers.dev 호스트명은 A와 AAAA를 모두 가진 듀얼스택이다. IPv4 전용 호스트명이 아니다.
+- 집 Wi-Fi 실측: 노트북은 IPv6 경로가 없어 IPv4로, 폰(Android)도 같은 공인 IPv4로 접속했다(`/cdn-cgi/trace`로 확인). 그래서 같은 방 키를 받는다. 노트북에서 실서버에 연결 두 개를 붙여 같은 방·같은 그룹 목록을 받는 것을 확인했다.
+- 남은 위험: 기기 일부만 IPv6로 접속하는 네트워크(IPv6를 주는 회사·집)에서는 방이 갈라진다. 그런 환경을 만나면 Open Questions의 대안(IPv4 전용 호스트명 또는 키 발급 엔드포인트)을 진행한다. 지금은 보류한다.
 
 ## Success Criteria
 - 같은 집 Wi-Fi의 폰 2대와 노트북 1대가 웹 주소만 열고, 들어오는 순서와 상관없이 마지막 기기가 들어온 뒤 10초 안에 같은 그룹이 되어 메시지를 주고받는다(노트북이 두 폰 모두에 닿는 경우). 폰끼리 못 닿는 경우에는 "미연결 기기 끌어오기"와 "다리 합치기"로 이 기준을 만족한다.
