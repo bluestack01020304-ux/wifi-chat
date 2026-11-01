@@ -130,6 +130,13 @@ Mode: Builder
 - 집 Wi-Fi 실측: 노트북은 IPv6 경로가 없어 IPv4로, 폰(Android)도 같은 공인 IPv4로 접속했다(`/cdn-cgi/trace`로 확인). 그래서 같은 방 키를 받는다. 노트북에서 실서버에 연결 두 개를 붙여 같은 방·같은 그룹 목록을 받는 것을 확인했다.
 - 남은 위험: 기기 일부만 IPv6로 접속하는 네트워크(IPv6를 주는 회사·집)에서는 방이 갈라진다. 그런 환경을 만나면 Open Questions의 대안(IPv4 전용 호스트명 또는 키 발급 엔드포인트)을 진행한다. 지금은 보류한다.
 
+## Browser Connection Results (Next Steps 3a, `web/`)
+- 2026-11-01 배포: `https://wifi-chat.pages.dev` (Cloudflare Pages 프로젝트 `wifi-chat`, `npx wrangler pages deploy dist --project-name wifi-chat --branch main`). wrangler 4.156은 Pages 프로젝트 생성을 Workers로 넘기려다 실패하므로 처음 한 번은 `pages project create --force`로 만들었다.
+- 노트북 headless Chrome 두 탭(로컬 dev와 배포본 모두): 혼자일 때 대기 문구 → 두 번째 탭이 `그룹에 연결됨`, 첫 탭 `연결된 사람 1명`, 경로 `host↔host` → 호스트 탭을 닫으면 남은 탭이 2.5초 안에 호스트가 된다(임시 규칙).
+- 집 Wi-Fi, 노트북 ↔ 폰(Android): **한 그룹으로 연결 성공**. 선택 경로 판정(`host`/`prflx-lan`/`prflx-hidden`)은 **미기록**.
+- 폰 화면 3초 끄기: **연결이 끊긴다**. 다시 켜고 새로고침하면 다시 합류한다. 끊긴 동안 남은 쪽은 "아직 이 Wi-Fi에 다른 사람이 없어요. 기다리는 중"을 정상 표시한다. Constraints의 예상과 같다. 끊김 감지와 자동 재합류는 Next Steps 5(heartbeat/승계)에서 다룬다.
+- 폰 모바일 데이터로 접속(다른 방 분리): **미확인**.
+
 ## Success Criteria
 - 같은 집 Wi-Fi의 폰 2대와 노트북 1대가 웹 주소만 열고, 들어오는 순서와 상관없이 마지막 기기가 들어온 뒤 10초 안에 같은 그룹이 되어 메시지를 주고받는다(노트북이 두 폰 모두에 닿는 경우). 폰끼리 못 닿는 경우에는 "미연결 기기 끌어오기"와 "다리 합치기"로 이 기준을 만족한다.
 - 다른 그룹에 닿지 못한 기기는 혼자 조용히 그룹을 만들지 않고 "연결할 수 없어요" 화면을 보며 미연결 상태로 기다린다.
