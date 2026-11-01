@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import type { Outgoing } from "../src/room";
-import { RoomState } from "../src/room";
+import { RoomState, SIGNAL_LIMIT, SIGNAL_WINDOW_MS } from "../src/room";
 
 let n = 0;
 const ids = () => "g" + ++n;
@@ -109,6 +109,28 @@ describe("handle", () => {
     expect(s.handle("a", { t: "signal", to: "b", sdp })).toEqual([
       { to: "b", msg: { t: "signal", from: "a", sdp } },
     ]);
+  });
+
+  it("rate-limits signals per sender", () => {
+    const s = twoPeers();
+    s.join("c", "mobile", 3);
+    for (let i = 0; i < SIGNAL_LIMIT; i++) {
+      expect(s.handle("a", { t: "signal", to: "b", sdp }, 1000)[0].to).toBe("b");
+    }
+    expect(s.handle("a", { t: "signal", to: "b", sdp }, 1000)).toEqual([
+      { to: "a", msg: expect.objectContaining({ t: "error", code: "too-many" }) },
+    ]);
+    // other senders are unaffected
+    expect(s.handle("c", { t: "signal", to: "b", sdp }, 1000)[0].to).toBe("b");
+    // the window resets
+    expect(s.handle("a", { t: "signal", to: "b", sdp }, 1000 + SIGNAL_WINDOW_MS)[0].to).toBe("b");
+  });
+
+  it("rate limit survives a rebuild from records", () => {
+    const s = twoPeers();
+    for (let i = 0; i < SIGNAL_LIMIT; i++) s.handle("a", { t: "signal", to: "b", sdp }, 1000);
+    const rebuilt = new RoomState(s.records(), ids);
+    expect(rebuilt.handle("a", { t: "signal", to: "b", sdp }, 1000)[0].msg).toMatchObject({ code: "too-many" });
   });
 
   it("signal to self or unknown peer is an error", () => {

@@ -1,7 +1,10 @@
 import type { ClientMessage, ErrorCode, GroupView, PeerStatus, RoomSnapshot, ServerMessage } from "./protocol";
 import type { Device } from "./roomKey";
 
-/** One connected peer. `term` is the group's term on host records, 0 otherwise. */
+/**
+ * One connected peer. `term` is the group's term on host records, 0 otherwise.
+ * `signalWindow`/`signals` rate-limit SDP relays from this peer.
+ */
 export interface PeerRecord {
   peerId: string;
   device: Device;
@@ -9,7 +12,13 @@ export interface PeerRecord {
   groupId: string | null;
   term: number;
   joinedAt: number;
+  signalWindow: number;
+  signals: number;
 }
+
+/** A joiner may offer to every other peer at once (up to 31), so leave room for that. */
+export const SIGNAL_LIMIT = 64;
+export const SIGNAL_WINDOW_MS = 10_000;
 
 export type Outgoing = { to: string; msg: ServerMessage };
 
@@ -53,7 +62,7 @@ export class RoomState {
 
   join(peerId: string, device: Device, now: number): Outgoing[] {
     const hasHost = [...this.peers.values()].some((r) => r.status === "host");
-    const record: PeerRecord = { peerId, device, status: "joining", groupId: null, term: 0, joinedAt: now };
+    const record: PeerRecord = { peerId, device, status: "joining", groupId: null, term: 0, joinedAt: now, signalWindow: now, signals: 0 };
     this.peers.set(peerId, record);
     if (!hasHost) this.becomeHost(record);
 
@@ -64,7 +73,7 @@ export class RoomState {
     ];
   }
 
-  handle(peerId: string, msg: ClientMessage): Outgoing[] {
+  handle(peerId: string, msg: ClientMessage, now: number = Date.now()): Outgoing[] {
     const me = this.peers.get(peerId);
     if (!me) return [];
     const waiting = me.status === "joining" || me.status === "unattached";
@@ -74,6 +83,12 @@ export class RoomState {
         if (msg.to === peerId || !this.peers.has(msg.to)) {
           return error(peerId, "no-such-peer", "no such peer in this room");
         }
+        if (now - me.signalWindow >= SIGNAL_WINDOW_MS) {
+          me.signalWindow = now;
+          me.signals = 0;
+        }
+        if (me.signals >= SIGNAL_LIMIT) return error(peerId, "too-many", "too many signals, slow down");
+        me.signals++;
         return [{ to: msg.to, msg: { t: "signal", from: peerId, sdp: msg.sdp } }];
 
       case "joined": {

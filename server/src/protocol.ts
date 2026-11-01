@@ -9,7 +9,8 @@ export type ErrorCode =
   | "too-large"
   | "no-such-peer"
   | "no-such-group"
-  | "bad-state";
+  | "bad-state"
+  | "too-many";
 
 export interface PeerView {
   peerId: string;

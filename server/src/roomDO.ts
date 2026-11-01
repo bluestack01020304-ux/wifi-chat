@@ -37,7 +37,7 @@ export class Room extends DurableObject {
       safeSend(ws, { t: "error", code: msg.error, message: "invalid message" });
       return;
     }
-    this.apply((state) => state.handle(peerId, msg));
+    this.apply((state) => state.handle(peerId, msg, Date.now()));
   }
 
   async webSocketClose(ws: WebSocket, code: number): Promise<void> {
