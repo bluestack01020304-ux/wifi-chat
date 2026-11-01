@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import type { Outgoing } from "../src/room";
-import { RoomState, SIGNAL_LIMIT, SIGNAL_WINDOW_MS } from "../src/room";
+import { type PeerRecord, RoomState, SIGNAL_LIMIT, SIGNAL_WINDOW_MS } from "../src/room";
 
 let n = 0;
 const ids = () => "g" + ++n;
@@ -180,5 +180,95 @@ describe("persistence", () => {
     s.join("late", "mobile", 9);
     s.join("early", "mobile", 1);
     expect(s.snapshot().peers.map((p) => p.peerId)).toEqual(["early", "late"]);
+  });
+});
+
+describe("merge", () => {
+  const rec = (peerId: string, status: PeerRecord["status"], groupId: string | null, term: number, joinedAt: number): PeerRecord => ({
+    peerId, device: "mobile", status, groupId, term, joinedAt, signalWindow: 0, signals: 0,
+  });
+  /** A: host a (term 1) + member a1. B: host b (term 3). u unattached. n and m joining. */
+  const room = () =>
+    new RoomState(
+      [
+        rec("a", "host", "A", 1, 1),
+        rec("a1", "member", "A", 0, 2),
+        rec("b", "host", "B", 3, 3),
+        rec("u", "unattached", null, 0, 4),
+        rec("n", "joining", null, 0, 5),
+        rec("m", "joining", null, 0, 6),
+      ],
+      ids,
+    );
+  const groupOf = (s: RoomState, host: string) => s.snapshot().groups.find((g) => g.hostId === host);
+
+  it("merge-start asks members of the listed groups only", () => {
+    const out = room().handle("n", { t: "merge-start", groups: ["A", "B"], unattached: ["u"] });
+    expect(out).toEqual([{ to: "a1", msg: { t: "merge-request", bridgeId: "n" } }]);
+  });
+
+  it("merge-start validates targets", () => {
+    const s = room();
+    expect(s.handle("n", { t: "merge-start", groups: ["Z"], unattached: [] })[0].msg).toMatchObject({ code: "no-such-group" });
+    expect(s.handle("n", { t: "merge-start", groups: [], unattached: ["a1"] })[0].msg).toMatchObject({ code: "no-such-peer" });
+    expect(s.handle("n", { t: "merge-start", groups: [], unattached: ["n"] })[0].msg).toMatchObject({ code: "no-such-peer" });
+    expect(s.handle("n", { t: "merge-start", groups: [], unattached: [] })[0].msg).toMatchObject({ code: "bad-state" });
+    expect(s.handle("a1", { t: "merge-start", groups: ["B"], unattached: [] })[0].msg).toMatchObject({ code: "bad-state" });
+  });
+
+  it("merge-start is rate-limited", () => {
+    const s = room();
+    for (let i = 0; i < SIGNAL_LIMIT; i++) s.handle("n", { t: "signal", to: "a", sdp }, 10);
+    expect(s.handle("n", { t: "merge-start", groups: ["A"], unattached: [] }, 10)[0].msg).toMatchObject({ code: "too-many" });
+  });
+
+  it("commit merges two whole groups", () => {
+    const s = room();
+    const out = s.handle("n", { t: "merge-commit", groups: ["A", "B"], peers: ["a", "a1", "b"] });
+    expect(recipients(out)).toEqual(["a1:room", "a:room", "b:room", "m:room", "n:room", "u:room"]);
+    const g = groupOf(s, "n")!;
+    expect(g).toMatchObject({ term: 4, members: ["a", "a1", "b"] });
+    expect(s.snapshot().groups).toHaveLength(1);
+  });
+
+  it("commit pulls unattached", () => {
+    const s = room();
+    s.handle("n", { t: "merge-commit", groups: ["B"], peers: ["b", "u"] });
+    expect(groupOf(s, "n")).toMatchObject({ term: 4, members: ["b", "u"] });
+    expect(groupOf(s, "a")).toMatchObject({ members: ["a1"] });
+  });
+
+  it("commit with only unattached forms a new group", () => {
+    const s = room();
+    s.handle("n", { t: "merge-commit", groups: [], peers: ["u"] });
+    expect(groupOf(s, "n")).toMatchObject({ term: 1, members: ["u"] });
+  });
+
+  it("commit drops a group whose new member is not covered", () => {
+    const s = room();
+    s.handle("n", { t: "merge-commit", groups: ["A"], peers: ["a", "u"] });
+    expect(groupOf(s, "n")).toMatchObject({ term: 1, members: ["u"] });
+    expect(groupOf(s, "a")).toMatchObject({ members: ["a1"] });
+  });
+
+  it("one whole group alone is rejected", () => {
+    const s = room();
+    const before = s.snapshot();
+    expect(s.handle("n", { t: "merge-commit", groups: ["B"], peers: ["b"] })).toEqual([
+      { to: "n", msg: { t: "error", code: "bad-state", message: expect.any(String) } },
+    ]);
+    expect(s.snapshot()).toEqual(before);
+  });
+
+  it("second commit over the same groups is rejected", () => {
+    const s = room();
+    s.handle("n", { t: "merge-commit", groups: ["A", "B"], peers: ["a", "a1", "b"] });
+    const after = s.snapshot();
+    expect(s.handle("m", { t: "merge-commit", groups: ["A", "B"], peers: ["a", "a1", "b"] })[0].msg).toMatchObject({ code: "bad-state" });
+    expect(s.snapshot()).toEqual(after);
+  });
+
+  it("commit from a settled peer is rejected", () => {
+    expect(room().handle("a1", { t: "merge-commit", groups: [], peers: ["u"] })[0].msg).toMatchObject({ code: "bad-state" });
   });
 });

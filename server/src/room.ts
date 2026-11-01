@@ -26,8 +26,10 @@ export type Outgoing = { to: string; msg: ServerMessage };
  * Pure room logic for one room key. Groups are never stored: a group is a
  * host record plus the member records that point at its groupId.
  *
- * Not yet here: bridge merges (Next Steps 3) and host succession (Next
- * Steps 5). Until then a leaving host dissolves its group.
+ * Bridge merges are validated here against the current records only; the
+ * server trusts the bridge's claim of which peers it is linked to.
+ * Not yet here: host succession (Next Steps 5). Until then a leaving host
+ * dissolves its group.
  */
 export class RoomState {
   private peers = new Map<string, PeerRecord>();
@@ -83,18 +85,12 @@ export class RoomState {
         if (msg.to === peerId || !this.peers.has(msg.to)) {
           return error(peerId, "no-such-peer", "no such peer in this room");
         }
-        if (now - me.signalWindow >= SIGNAL_WINDOW_MS) {
-          me.signalWindow = now;
-          me.signals = 0;
-        }
-        if (me.signals >= SIGNAL_LIMIT) return error(peerId, "too-many", "too many signals, slow down");
-        me.signals++;
+        if (!this.spendSignal(me, now)) return error(peerId, "too-many", "too many signals, slow down");
         return [{ to: msg.to, msg: { t: "signal", from: peerId, sdp: msg.sdp } }];
 
       case "joined": {
         if (!waiting) return error(peerId, "bad-state", "only a waiting peer can join a group");
-        const host = [...this.peers.values()].find((r) => r.status === "host" && r.groupId === msg.groupId);
-        if (!host) return error(peerId, "no-such-group", "no such group in this room");
+        if (!this.hostOf(msg.groupId)) return error(peerId, "no-such-group", "no such group in this room");
         me.status = "member";
         me.groupId = msg.groupId;
         return this.broadcast();
@@ -109,6 +105,43 @@ export class RoomState {
         if (!waiting) return error(peerId, "bad-state", "only a waiting peer can start alone");
         this.becomeHost(me);
         return this.broadcast();
+
+      case "merge-start": {
+        if (!waiting) return error(peerId, "bad-state", "only a waiting peer can bridge");
+        if (msg.groups.length + msg.unattached.length === 0) return error(peerId, "bad-state", "nothing to merge");
+        const hosts = msg.groups.map((g) => this.hostOf(g));
+        if (hosts.some((h) => !h)) return error(peerId, "no-such-group", "no such group in this room");
+        if (msg.unattached.some((id) => id === peerId || this.peers.get(id)?.status !== "unattached")) {
+          return error(peerId, "no-such-peer", "no such unattached peer in this room");
+        }
+        if (!this.spendSignal(me, now)) return error(peerId, "too-many", "too many signals, slow down");
+        return [...this.peers.values()]
+          .filter((r) => r.status === "member" && msg.groups.includes(r.groupId!))
+          .map((r) => ({ to: r.peerId, msg: { t: "merge-request", bridgeId: peerId } }));
+      }
+
+      case "merge-commit": {
+        if (!waiting) return error(peerId, "bad-state", "only a waiting peer can bridge");
+        const claimed = new Set(msg.peers);
+        const whole = [...new Set(msg.groups)].flatMap((groupId) => {
+          const peers = [...this.peers.values()].filter((r) => r.groupId === groupId && (r.status === "host" || r.status === "member"));
+          const host = peers.find((r) => r.status === "host");
+          return host && peers.every((r) => claimed.has(r.peerId)) ? [{ host, peers }] : [];
+        });
+        const pulled = [...claimed]
+          .map((id) => this.peers.get(id))
+          .filter((r): r is PeerRecord => !!r && r.peerId !== peerId && r.status === "unattached");
+        if (whole.length < 2 && pulled.length === 0) return error(peerId, "bad-state", "nothing to merge");
+
+        const term = Math.max(0, ...whole.map((g) => g.host.term)) + 1;
+        this.becomeHost(me, term);
+        for (const r of [...whole.flatMap((g) => g.peers), ...pulled]) {
+          r.status = "member";
+          r.groupId = me.groupId;
+          r.term = 0;
+        }
+        return this.broadcast();
+      }
     }
   }
 
@@ -127,10 +160,25 @@ export class RoomState {
     return this.broadcast();
   }
 
-  private becomeHost(r: PeerRecord): void {
+  private becomeHost(r: PeerRecord, term = 1): void {
     r.status = "host";
     r.groupId = this.newId();
-    r.term = 1;
+    r.term = term;
+  }
+
+  private hostOf(groupId: string): PeerRecord | undefined {
+    return [...this.peers.values()].find((r) => r.status === "host" && r.groupId === groupId);
+  }
+
+  /** Counts one relay against the sender's window; false when over the limit. */
+  private spendSignal(me: PeerRecord, now: number): boolean {
+    if (now - me.signalWindow >= SIGNAL_WINDOW_MS) {
+      me.signalWindow = now;
+      me.signals = 0;
+    }
+    if (me.signals >= SIGNAL_LIMIT) return false;
+    me.signals++;
+    return true;
   }
 
   /** A `room` message to every peer except `except`. */
