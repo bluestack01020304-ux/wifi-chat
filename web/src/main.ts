@@ -1,95 +1,21 @@
 import "./style.css";
+import type { RoomSnapshot } from "../../server/src/protocol";
 import { History } from "./chat/history";
 import { makeNickname } from "./chat/nickname";
+import { knownRoster, type Note, rosterNotes } from "./chat/notes";
 import { ChatSession } from "./chat/session";
+import type { RosterEntry } from "./chat/wire";
 import { detectDevice, signalUrl } from "./config";
 import { createHost } from "./host";
 import { Joiner, type View } from "./joiner";
-import type { RoomSnapshot } from "../../server/src/protocol";
 import { Links } from "./links";
 import { linksToClose } from "./merge";
-import { createDialer, type Connection } from "./peer";
-import { readRoom } from "./roomLink";
+import { type Connection, createDialer } from "./peer";
+import { type RoomInfo, readRoom } from "./roomLink";
 import { Signaling } from "./signaling";
-import { createChatView, el } from "./ui";
-
-const COPY = {
-  entry: "메시지는 이 Wi-Fi 밖으로 나가지 않아요",
-  connecting: "연결 중…",
-  waiting: "아직 이 Wi-Fi에 다른 사람이 없어요. 기다리는 중",
-  aloneBanner: "아직 나와 연결된 사람이 없어요",
-  failed: "이 Wi-Fi의 다른 사람과 연결할 수 없어요. 같은 Wi-Fi가 아니거나, 이 네트워크가 기기 간 연결을 막고 있어요",
-  startAlone: "따로 시작하기",
-  closed: "중개 서버와 연결이 끊겼어요. 새로고침해 주세요",
-};
+import { createApp, showBadUrl } from "./ui";
 
 const VERDICT_LABEL = { host: "host↔host", "prflx-lan": "host↔사설 prflx", "prflx-hidden": "host↔prflx(주소 가림)" } as const;
-
-const app = document.getElementById("app")!;
-app.replaceChildren(el("p", COPY.entry, "entry"));
-const statusBox = el("div", undefined, "status-box");
-app.append(statusBox);
-let socketClosed = false;
-
-function render(view: View): void {
-  renderStatus(view);
-  chatView.render(!socketClosed && (view.kind === "host" || view.kind === "member"));
-}
-
-function renderStatus(view: View): void {
-  statusBox.replaceChildren();
-
-  const section = el("section", undefined, `view view-${socketClosed ? "closed" : view.kind}`);
-  if (socketClosed) {
-    section.append(el("p", COPY.closed, "bad"));
-  } else if (view.kind === "connecting") {
-    section.append(el("p", COPY.connecting));
-  } else if (view.kind === "host") {
-    if (view.members.length === 0) section.append(el("p", COPY.aloneBanner, "banner"));
-    section.append(el("p", view.aloneInRoom ? COPY.waiting : `호스트 · 연결된 사람 ${view.members.length}명`));
-  } else if (view.kind === "member") {
-    section.append(el("p", `그룹에 연결됨 · 호스트 ${view.hostId.slice(0, 4)}`, "ok"));
-  } else {
-    section.append(el("p", COPY.failed, "bad"));
-    const button = el("button", COPY.startAlone);
-    button.addEventListener("click", () => joiner.startAlone());
-    section.append(button);
-  }
-  statusBox.append(section);
-
-  const path = currentPath(view);
-  if (path) statusBox.append(el("p", `경로: ${path}`, "status"));
-}
-
-/** The path of my link to my host (member), or of my latest member link (host). */
-function currentPath(view: View): string {
-  const ids = view.kind === "member" ? [view.hostId] : view.kind === "host" ? [...view.members].reverse() : [];
-  for (const id of ids) {
-    const link = links.get(id);
-    if (link) return VERDICT_LABEL[link.path.verdict];
-  }
-  return "";
-}
-
-function onRoom(room: RoomSnapshot): void {
-  links.close(linksToClose(myId, room, links.ids()));
-}
-
-const page = new URL(location.href);
-const device = detectDevice(navigator.userAgent, matchMedia("(pointer: fine)").matches);
-const sig = new Signaling(signalUrl(page, device));
-let myId = "";
-const links = new Links<Connection>(() => myId);
-const dialer = createDialer(sig, links, () => {});
-const host = createHost(sig, links, () => {});
-const joiner = new Joiner({
-  send: (m) => sig.send(m),
-  dial: dialer.dial,
-  device,
-  linked: () => links.ids(),
-  // Spec 강등: a demoted host stops relaying and closes every DataChannel at once.
-  onDemoted: () => links.close(links.ids()),
-});
 
 /**
  * Spec: a host tells the server it is alive every second; 2 s of silence hands the group on.
@@ -97,67 +23,158 @@ const joiner = new Joiner({
  * I send nothing: an idle single tab must not wake the server every second.
  */
 const HEARTBEAT_MS = 1000;
-// Dev-only test hook: `window.__muteHeartbeat = true` stalls this host to exercise demotion. Stripped from production builds.
-const muted = () => import.meta.env.DEV && (globalThis as { __muteHeartbeat?: boolean }).__muteHeartbeat === true;
-setInterval(() => {
-  const view = joiner.view;
-  if (!socketClosed && !muted() && view.kind === "host" && !view.aloneInRoom) sig.send({ t: "heartbeat" });
-}, HEARTBEAT_MS);
 
-// Chat: nickname and history live in memory only (closing every tab ends the conversation).
-const myNick = makeNickname(Math.random);
-const history = new History();
-const roomInfo = readRoom(page);
-const session = new ChatSession({
-  myNick,
-  mode: "error" in roomInfo ? "family" : roomInfo.mode,
-  history,
-  channel: (peerId) => links.get(peerId)?.dc,
-  myId: () => myId,
-  now: () => Date.now(),
-  newId: () => crypto.randomUUID(),
-});
-const chatView = createChatView(app, { myNick, history, session, myId: () => myId });
-const refresh = () => {
-  session.update(joiner.view);
-  render(joiner.view);
-};
-history.onChange(() => render(joiner.view));
-session.onChange(() => render(joiner.view));
+const app = document.getElementById("app")!;
+const page = new URL(location.href);
+const room = readRoom(page);
+// A room the server would refuse: say so instead of opening a socket that is rejected.
+if ("error" in room) showBadUrl(app, page.origin + page.pathname);
+else boot(room);
 
-sig.onMessage((m) => {
-  switch (m.t) {
-    case "welcome":
-      myId = m.peerId;
-      // Dev-only test hook: force a second group (`?alone=1`). Stripped from production builds.
-      if (import.meta.env.DEV && page.searchParams.get("alone") === "1") sig.send({ t: "start-alone" });
-      joiner.onWelcome(m.peerId, m.room);
-      onRoom(m.room);
-      break;
-    case "room":
-      joiner.onRoom(m.room);
-      onRoom(m.room);
-      break;
-    case "signal":
-      if (m.sdp.type === "answer") dialer.onAnswer(m.from, m.sdp);
-      else void host.onOffer(m.from, m.sdp);
-      break;
-    case "merge-request":
-      joiner.onMergeRequest(m.bridgeId);
-      break;
-    case "error":
-      console.warn("signaling error", m.code, m.message);
-      joiner.onError(m.code);
-      break;
+function boot(room: RoomInfo): void {
+  const device = detectDevice(navigator.userAgent, matchMedia("(pointer: fine)").matches);
+  const sig = new Signaling(signalUrl(page, device));
+  let myId = "";
+  let socketClosed = false;
+  let othersInRoom: number | null = null;
+  const links = new Links<Connection>(() => myId);
+  const dialer = createDialer(sig, links, () => {});
+  const host = createHost(sig, links, () => {});
+  const joiner = new Joiner({
+    send: (m) => sig.send(m),
+    dial: dialer.dial,
+    device,
+    linked: () => links.ids(),
+    // Spec 강등: a demoted host stops relaying and closes every DataChannel at once.
+    onDemoted: () => links.close(links.ids()),
+  });
+
+  // Dev-only test hook: `window.__muteHeartbeat = true` stalls this host to exercise demotion. Stripped from production builds.
+  const muted = () => import.meta.env.DEV && (globalThis as { __muteHeartbeat?: boolean }).__muteHeartbeat === true;
+  setInterval(() => {
+    const view = joiner.view;
+    if (!socketClosed && !muted() && view.kind === "host" && !view.aloneInRoom) sig.send({ t: "heartbeat" });
+  }, HEARTBEAT_MS);
+
+  // Chat: nickname and history live in memory only (closing every tab ends the conversation).
+  let myNick = makeNickname(Math.random);
+  const history = new History();
+  const session = new ChatSession({
+    myNick,
+    mode: room.mode,
+    history,
+    channel: (peerId) => links.get(peerId)?.dc,
+    myId: () => myId,
+    now: () => Date.now(),
+    newId: () => crypto.randomUUID(),
+  });
+
+  // System lines: derived on this device from roster changes once the chat is shown.
+  let entered = false;
+  const notes: Note[] = [];
+  let lastRoster: RosterEntry[] | null = null;
+  let lostAt: number | null = null;
+  function onRoster(): void {
+    const roster = session.roster();
+    if (!entered) return;
+    if (roster.length === 0) {
+      // My channel to my host is gone: start timing the handover.
+      if (lastRoster && lostAt === null) lostAt = Date.now();
+      return;
+    }
+    const now = Date.now();
+    notes.push(...rosterNotes(lastRoster, roster, myId, now, lostAt === null ? null : now - lostAt));
+    lastRoster = knownRoster(lastRoster, roster);
+    lostAt = null;
   }
-});
-sig.onClose(() => {
-  socketClosed = true;
-  render(joiner.view);
-});
-links.onChange(() => {
-  joiner.onLinksChanged();
+
+  const ui = createApp(app, {
+    room,
+    page,
+    history,
+    session,
+    myId: () => myId,
+    onEnter: () => {
+      entered = true;
+      const roster = session.roster();
+      lastRoster = roster.length > 0 ? roster : null;
+      render();
+    },
+    onReroll: () => {
+      myNick = makeNickname(Math.random);
+      session.setNick(myNick);
+      render();
+    },
+    onStartAlone: () => joiner.startAlone(),
+  });
+
+  /** The path of my link to my host (member), or of my latest member link (host). */
+  function currentPath(view: View): string {
+    const ids = view.kind === "member" ? [view.hostId] : view.kind === "host" ? [...view.members].reverse() : [];
+    for (const id of ids) {
+      const link = links.get(id);
+      if (link) return VERDICT_LABEL[link.path.verdict];
+    }
+    return "";
+  }
+
+  function render(): void {
+    const view = joiner.view;
+    ui.render({ view, socketClosed, entered, othersInRoom, myNick, path: currentPath(view), notes });
+  }
+
+  function refresh(): void {
+    session.update(joiner.view);
+    render();
+  }
+
+  function pruneLinks(snapshot: RoomSnapshot): void {
+    links.close(linksToClose(myId, snapshot, links.ids()));
+    othersInRoom = snapshot.peers.filter((p) => p.peerId !== myId).length;
+  }
+
+  history.onChange(() => render());
+  session.onChange(() => {
+    onRoster();
+    render();
+  });
+
+  sig.onMessage((m) => {
+    switch (m.t) {
+      case "welcome":
+        myId = m.peerId;
+        // Dev-only test hook: force a second group (`?alone=1`). Stripped from production builds.
+        if (import.meta.env.DEV && page.searchParams.get("alone") === "1") sig.send({ t: "start-alone" });
+        joiner.onWelcome(m.peerId, m.room);
+        pruneLinks(m.room);
+        render();
+        break;
+      case "room":
+        joiner.onRoom(m.room);
+        pruneLinks(m.room);
+        render();
+        break;
+      case "signal":
+        if (m.sdp.type === "answer") dialer.onAnswer(m.from, m.sdp);
+        else void host.onOffer(m.from, m.sdp);
+        break;
+      case "merge-request":
+        joiner.onMergeRequest(m.bridgeId);
+        break;
+      case "error":
+        console.warn("signaling error", m.code, m.message);
+        joiner.onError(m.code);
+        break;
+    }
+  });
+  sig.onClose(() => {
+    socketClosed = true;
+    render();
+  });
+  links.onChange(() => {
+    joiner.onLinksChanged();
+    refresh();
+  });
+  joiner.onChange(() => refresh());
   refresh();
-});
-joiner.onChange(() => refresh());
-refresh();
+}

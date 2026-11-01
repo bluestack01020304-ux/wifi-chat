@@ -27,3 +27,14 @@ export function rosterNotes(prev: RosterEntry[] | null, next: RosterEntry[], myI
   }
   return notes;
 }
+
+/**
+ * Everyone seen since entering, with `next`'s host as the only host. A new
+ * host's roster starts with just itself and refills as members re-attach;
+ * comparing against this keeps those re-attachments from reading as arrivals.
+ */
+export function knownRoster(prev: RosterEntry[] | null, next: RosterEntry[]): RosterEntry[] {
+  const ids = new Set(next.map((p) => p.peerId));
+  const gone = (prev ?? []).filter((p) => !ids.has(p.peerId)).map((p) => ({ ...p, host: false }));
+  return [...next, ...gone];
+}

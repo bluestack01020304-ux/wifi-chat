@@ -1,31 +1,44 @@
 :root {
   --bg: #fafaf7;
+  --surface: #ffffff;
   --fg: #1d1d1b;
   --muted: #6b6b66;
+  --line: #3c3c38;
+  --soft-line: #d6d6cf;
   --ok: #1f7a4d;
   --bad: #b3261e;
   --banner-bg: #fff4d6;
+  --accent: #1f5fd1;
   --button-bg: #1d1d1b;
   --button-fg: #fafaf7;
-  --line: #dcdcd5;
   color-scheme: light dark;
 }
 @media (prefers-color-scheme: dark) {
   :root {
     --bg: #161615;
+    --surface: #1f1f1d;
     --fg: #ecece8;
     --muted: #a1a19b;
+    --line: #c9c9c2;
+    --soft-line: #3a3a36;
     --ok: #5fcf93;
     --bad: #ff8a80;
     --banner-bg: #3a3220;
+    --accent: #8ab4ff;
     --button-bg: #ecece8;
     --button-fg: #161615;
-    --line: #3a3a36;
   }
 }
 
+* {
+  box-sizing: border-box;
+}
+html,
 body {
   margin: 0;
+  overflow-x: hidden;
+}
+body {
   background: var(--bg);
   color: var(--fg);
   font: 16px/1.5 system-ui, -apple-system, "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
@@ -33,112 +46,264 @@ body {
 #app {
   max-width: 32rem;
   margin: 0 auto;
-  padding: 24px 16px;
+  padding: 16px;
+  min-height: 100dvh;
 }
-.entry,
-.status {
+[hidden] {
+  display: none !important;
+}
+p {
+  margin: 6px 0;
+}
+.muted {
   color: var(--muted);
+}
+.small {
   font-size: 14px;
 }
-.view p {
-  margin: 12px 0;
+.tiny {
+  font-size: 12px;
+}
+.bad {
+  color: var(--bad);
 }
 .banner {
   background: var(--banner-bg);
   padding: 8px 12px;
   border-radius: 8px;
 }
-.ok {
-  color: var(--ok);
-}
-.bad {
-  color: var(--bad);
-}
 button {
   font: inherit;
-  padding: 10px 16px;
-  border: 0;
-  border-radius: 8px;
-  background: var(--button-bg);
-  color: var(--button-fg);
   cursor: pointer;
-}
-
-.chat {
-  margin-top: 16px;
-  border-top: 1px solid var(--line);
-  padding-top: 12px;
-}
-.chat[hidden] {
-  display: none;
-}
-.my-nick {
-  color: var(--muted);
-  font-size: 14px;
-  margin: 0 0 4px;
-}
-.roster {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px 12px;
-  margin: 0 0 12px;
-  font-size: 14px;
-}
-.person.away {
-  color: var(--muted);
-}
-.tag {
-  margin-left: 4px;
-  padding: 0 6px;
-  border: 1px dashed var(--muted);
-  border-radius: 6px;
-  font-size: 12px;
-}
-.messages {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  max-height: 55vh;
-  overflow-y: auto;
-}
-.messages li {
-  margin: 6px 0;
-  overflow-wrap: anywhere;
-}
-.messages .nick {
-  font-weight: 600;
-  margin-right: 8px;
-}
-.messages .text {
-  white-space: pre-wrap;
-}
-.messages li.mine .nick {
-  color: var(--ok);
-}
-.composer {
-  display: flex;
-  gap: 8px;
-  margin-top: 12px;
-}
-.composer input {
-  flex: 1;
-  min-width: 0;
-  font: inherit;
-  padding: 10px 12px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: var(--bg);
   color: var(--fg);
+  background: transparent;
+  border: 1.5px solid var(--line);
+  border-radius: 10px;
+  padding: 8px 14px;
 }
 button:disabled,
-.composer input:disabled {
+input:disabled {
   opacity: 0.5;
   cursor: not-allowed;
 }
-.notice {
+input {
+  font: inherit;
+  color: var(--fg);
+  background: var(--surface);
+  border: 1.5px solid var(--line);
+  border-radius: 999px;
+  padding: 8px 14px;
+  min-width: 0;
+}
+.chip {
+  display: inline-block;
+  font-size: 12px;
+  padding: 1px 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  white-space: nowrap;
+}
+
+/* Entry */
+.entry {
+  min-height: calc(100dvh - 32px);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  gap: 8px;
+}
+.entry .who {
+  font-size: 18px;
+}
+.link-button {
+  border: 0;
+  padding: 0 4px;
   color: var(--muted);
+  text-decoration: underline;
+}
+.primary {
+  font-size: 18px;
+  font-weight: 600;
+  padding: 10px 22px;
+  border-width: 2px;
+  margin: 8px 0;
+}
+.notices {
+  margin-top: 8px;
+  font-size: 13px;
+  color: var(--muted);
+}
+.notices p {
+  margin: 2px 0;
+}
+
+/* Avatars */
+.avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border: 1.5px solid var(--line);
+  border-radius: 50%;
+  font-weight: 600;
+}
+.avatar.big {
+  width: 72px;
+  height: 72px;
+  font-size: 24px;
+}
+
+/* Room */
+.room-header {
+  padding-bottom: 10px;
+  border-bottom: 1px dashed var(--soft-line);
+}
+.room-header h1 {
+  font-size: 20px;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.status:empty {
+  display: none;
+}
+.status {
+  padding-top: 6px;
+}
+.avatars {
+  list-style: none;
+  margin: 0;
+  padding: 12px 0;
+  display: flex;
+  gap: 14px;
+  overflow-x: auto;
+  border-bottom: 1px dashed var(--soft-line);
+}
+.avatars:empty {
+  display: none;
+}
+.person {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  min-width: 56px;
+  max-width: 80px;
+  text-align: center;
+}
+.person .name {
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.person.away {
+  opacity: 0.55;
+}
+.tag {
+  font-size: 11px;
+  padding: 0 4px;
+  border: 1px dashed var(--line);
+  border-radius: 4px;
+}
+
+/* Messages */
+.messages {
+  list-style: none;
+  margin: 0;
+  padding: 12px 0;
+  min-height: 40vh;
+  max-height: 55vh;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.bubble {
+  align-self: flex-start;
+  max-width: 85%;
+  border: 1.5px solid var(--line);
+  border-radius: 12px;
+  padding: 6px 12px;
+  background: var(--surface);
+  overflow-wrap: anywhere;
+}
+.bubble.mine {
+  align-self: flex-end;
+  border-style: dashed;
+}
+.bubble .nick {
+  display: block;
+  font-size: 11px;
+  color: var(--muted);
+}
+.bubble.mine .nick {
+  display: none;
+}
+.bubble .text {
+  white-space: pre-wrap;
+}
+.system {
+  align-self: center;
+  text-align: center;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+/* Composer */
+.composer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-top: 10px;
+  border-top: 1px dashed var(--soft-line);
+}
+.composer input {
+  flex: 1;
+}
+.send {
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border-radius: 50%;
+  color: var(--accent);
+  font-size: 18px;
+}
+
+/* Room panel */
+.room-panel {
+  margin-top: 24px;
   font-size: 14px;
 }
-.notice[hidden] {
-  display: none;
+.room-panel summary {
+  cursor: pointer;
+  color: var(--muted);
+}
+.room-panel form,
+.link-out {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+}
+.room-panel form input:not([type="radio"]),
+.link-out input {
+  flex: 1 1 100%;
+  border-radius: 8px;
+}
+.radios {
+  display: flex;
+  gap: 12px;
+}
+.qr {
+  display: block;
+  max-width: 100%;
+  background: #fff;
+  padding: 6px;
+  border-radius: 8px;
+}
+.bad-url {
+  text-align: center;
+  padding-top: 30vh;
 }

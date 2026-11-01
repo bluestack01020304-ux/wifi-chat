@@ -23,8 +23,9 @@ export function readRoom(page: URL): RoomInfo | { error: string } {
 }
 
 /** An unguessable meeting token: 16 random bytes as 22 base64url characters. */
-export function meetingKey(fill: (bytes: Uint8Array) => Uint8Array): string {
-  const bytes = fill(new Uint8Array(16));
+export function meetingKey(fill: (bytes: Uint8Array<ArrayBuffer>) => unknown): string {
+  const bytes = new Uint8Array(16);
+  fill(bytes);
   let bin = "";
   for (const b of bytes) bin += String.fromCharCode(b);
   return btoa(bin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
