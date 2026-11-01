@@ -1,5 +1,5 @@
 import type { History } from "./history";
-import { type ChatMessage, historyFrame, parseToHost, type RosterEntry, type ToMember } from "./wire";
+import { type ChatMessage, historyFrame, MAX_NICK, parseToHost, type RosterEntry, type ToMember } from "./wire";
 
 /** Spec: a member whose link dropped stays "잠시 자리 비움" for 30 s. */
 export const AWAY_MS = 30_000;
@@ -7,7 +7,8 @@ export const SAY_LIMIT = 20;
 export const SAY_WINDOW_MS = 10_000;
 
 interface Member {
-  nick: string | null; // null until hello
+  nick: string | null; // the shown nickname, numbered if taken; null until hello
+  asked: string | null; // the nickname the member asked for
   away: boolean;
   awayTimer: ReturnType<typeof setTimeout> | null;
   windowStart: number;
@@ -38,7 +39,7 @@ export class HostHub {
     if (this.closed) return;
     const m = this.members.get(peerId);
     if (!m) {
-      this.members.set(peerId, { nick: null, away: false, awayTimer: null, windowStart: 0, said: 0 });
+      this.members.set(peerId, { nick: null, asked: null, away: false, awayTimer: null, windowStart: 0, said: 0 });
       return;
     }
     if (m.awayTimer) clearTimeout(m.awayTimer);
@@ -73,8 +74,11 @@ export class HostHub {
     // hello and say share one budget: a repeated hello costs a full history and a roster broadcast.
     if (!this.allow(m)) return;
     if (frame.t === "hello") {
-      const changed = m.nick !== frame.nick;
-      m.nick = frame.nick;
+      const changed = m.asked !== frame.nick;
+      if (changed) {
+        m.asked = frame.nick;
+        m.nick = this.uniqueNick(peerId, frame.nick);
+      }
       this.deps.send(peerId, historyFrame(this.deps.history.list()));
       if (changed) this.rosterChanged();
       else this.sendTo(peerId, { t: "roster", people: this.roster() });
@@ -107,6 +111,18 @@ export class HostHub {
     this.closed = true;
     for (const m of this.members.values()) if (m.awayTimer) clearTimeout(m.awayTimer);
     this.members.clear();
+  }
+
+  /** `asked`, or `asked` with " 2", " 3"… when the host or another member already shows it. */
+  private uniqueNick(peerId: string, asked: string): string {
+    const taken = new Set([this.deps.myNick]);
+    for (const [id, other] of this.members) if (id !== peerId && other.nick !== null) taken.add(other.nick);
+    if (!taken.has(asked)) return asked;
+    for (let n = 2; ; n++) {
+      const suffix = ` ${n}`;
+      const base = Array.from(asked).slice(0, MAX_NICK - suffix.length).join("").trimEnd();
+      if (!taken.has(base + suffix)) return base + suffix;
+    }
   }
 
   private allow(m: Member): boolean {

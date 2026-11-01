@@ -106,6 +106,35 @@ describe("HostHub", () => {
     expect(out.filter(([to, f]) => to === "a" && f.t === "roster").length).toBeLessThanOrEqual(SAY_LIMIT);
   });
 
+  it("a duplicate nickname gets a number", () => {
+    const { hub, join, said } = setup();
+    join("a", "졸린 거북이");
+    join("b", "졸린 거북이");
+    join("c", "호스트 고양이");
+    join("d", "졸린 거북이");
+    expect(hub.roster().map((p) => p.nick)).toEqual(["호스트 고양이", "졸린 거북이", "졸린 거북이 2", "호스트 고양이 2", "졸린 거북이 3"]);
+    hub.onFrame("b", j({ t: "say", id: "m", text: "hi" }));
+    expect(said("msg")[0][1]).toMatchObject({ msg: { nick: "졸린 거북이 2" } });
+  });
+
+  it("a numbered nickname still fits the length limit", () => {
+    const { hub, join } = setup();
+    const long = "가".repeat(20);
+    join("a", long);
+    join("b", long);
+    const nick = hub.roster()[2].nick;
+    expect(Array.from(nick)).toHaveLength(20);
+    expect(nick.endsWith(" 2")).toBe(true);
+  });
+
+  it("a member keeps its number when it says hello again", () => {
+    const { hub, join } = setup();
+    join("a", "졸린 거북이");
+    join("b", "졸린 거북이");
+    hub.onFrame("b", j({ t: "hello", nick: "졸린 거북이" }));
+    expect(hub.roster().map((p) => p.nick)).toEqual(["호스트 고양이", "졸린 거북이", "졸린 거북이 2"]);
+  });
+
   it("detach marks away then removes after 30 s", () => {
     const { hub, join, said } = setup();
     join("a");

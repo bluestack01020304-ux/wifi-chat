@@ -56,6 +56,9 @@ export function createChatView(root: HTMLElement, deps: ChatViewDeps): { render(
 
   function renderRoster(): void {
     const me = deps.myId();
+    // The host may have numbered my nickname ("졸린 거북이 2"); show what others see.
+    const shown = deps.session.roster().find((p) => p.peerId === me)?.nick ?? deps.myNick;
+    nickLine.textContent = `${CHAT_COPY.myNick}: ${shown}`;
     roster.replaceChildren(
       ...deps.session.roster().map((p) => {
         const item = el("span", undefined, p.away ? "person away" : "person");

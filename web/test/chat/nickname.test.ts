@@ -13,12 +13,12 @@ describe("makeNickname", () => {
     }
   });
 
-  it("has at least 256 combinations", () => {
+  it("has at least 1600 combinations", () => {
     const seen = new Set<string>();
-    for (let i = 0; i < 16; i++) for (let k = 0; k < 16; k++) {
-      const calls = [i / 16 + 0.001, k / 16 + 0.001];
+    for (let i = 0; i < 40; i++) for (let k = 0; k < 40; k++) {
+      const calls = [(i + 0.5) / 40, (k + 0.5) / 40];
       seen.add(makeNickname(() => calls.shift()!));
     }
-    expect(seen.size).toBe(256);
+    expect(seen.size).toBe(1600);
   });
 });
