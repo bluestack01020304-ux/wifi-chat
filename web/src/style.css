@@ -7,6 +7,7 @@
   --banner-bg: #fff4d6;
   --button-bg: #1d1d1b;
   --button-fg: #fafaf7;
+  --line: #dcdcd5;
   color-scheme: light dark;
 }
 @media (prefers-color-scheme: dark) {
@@ -19,6 +20,7 @@
     --banner-bg: #3a3220;
     --button-bg: #ecece8;
     --button-fg: #161615;
+    --line: #3a3a36;
   }
 }
 
@@ -60,4 +62,83 @@ button {
   background: var(--button-bg);
   color: var(--button-fg);
   cursor: pointer;
+}
+
+.chat {
+  margin-top: 16px;
+  border-top: 1px solid var(--line);
+  padding-top: 12px;
+}
+.chat[hidden] {
+  display: none;
+}
+.my-nick {
+  color: var(--muted);
+  font-size: 14px;
+  margin: 0 0 4px;
+}
+.roster {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  margin: 0 0 12px;
+  font-size: 14px;
+}
+.person.away {
+  color: var(--muted);
+}
+.tag {
+  margin-left: 4px;
+  padding: 0 6px;
+  border: 1px dashed var(--muted);
+  border-radius: 6px;
+  font-size: 12px;
+}
+.messages {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 55vh;
+  overflow-y: auto;
+}
+.messages li {
+  margin: 6px 0;
+  overflow-wrap: anywhere;
+}
+.messages .nick {
+  font-weight: 600;
+  margin-right: 8px;
+}
+.messages .text {
+  white-space: pre-wrap;
+}
+.messages li.mine .nick {
+  color: var(--ok);
+}
+.composer {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+}
+.composer input {
+  flex: 1;
+  min-width: 0;
+  font: inherit;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--fg);
+}
+button:disabled,
+.composer input:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.notice {
+  color: var(--muted);
+  font-size: 14px;
+}
+.notice[hidden] {
+  display: none;
 }

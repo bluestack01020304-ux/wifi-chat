@@ -1,4 +1,7 @@
 import "./style.css";
+import { History } from "./chat/history";
+import { makeNickname } from "./chat/nickname";
+import { ChatSession } from "./chat/session";
 import { detectDevice, signalUrl } from "./config";
 import { createHost } from "./host";
 import { Joiner, type View } from "./joiner";
@@ -7,6 +10,7 @@ import { Links } from "./links";
 import { linksToClose } from "./merge";
 import { createDialer, type Connection } from "./peer";
 import { Signaling } from "./signaling";
+import { createChatView, el } from "./ui";
 
 const COPY = {
   entry: "메시지는 이 Wi-Fi 밖으로 나가지 않아요",
@@ -21,18 +25,18 @@ const COPY = {
 const VERDICT_LABEL = { host: "host↔host", "prflx-lan": "host↔사설 prflx", "prflx-hidden": "host↔prflx(주소 가림)" } as const;
 
 const app = document.getElementById("app")!;
+app.replaceChildren(el("p", COPY.entry, "entry"));
+const statusBox = el("div", undefined, "status-box");
+app.append(statusBox);
 let socketClosed = false;
 
-function el<K extends keyof HTMLElementTagNameMap>(tag: K, text?: string, cls?: string): HTMLElementTagNameMap[K] {
-  const e = document.createElement(tag);
-  if (text !== undefined) e.textContent = text;
-  if (cls) e.className = cls;
-  return e;
+function render(view: View): void {
+  renderStatus(view);
+  chatView.render(!socketClosed && (view.kind === "host" || view.kind === "member"));
 }
 
-function render(view: View): void {
-  app.replaceChildren();
-  app.append(el("p", COPY.entry, "entry"));
+function renderStatus(view: View): void {
+  statusBox.replaceChildren();
 
   const section = el("section", undefined, `view view-${socketClosed ? "closed" : view.kind}`);
   if (socketClosed) {
@@ -50,10 +54,10 @@ function render(view: View): void {
     button.addEventListener("click", () => joiner.startAlone());
     section.append(button);
   }
-  app.append(section);
+  statusBox.append(section);
 
   const path = currentPath(view);
-  if (path) app.append(el("p", `경로: ${path}`, "status"));
+  if (path) statusBox.append(el("p", `경로: ${path}`, "status"));
 }
 
 /** The path of my link to my host (member), or of my latest member link (host). */
@@ -78,6 +82,25 @@ const links = new Links<Connection>(() => myId);
 const dialer = createDialer(sig, links, () => {});
 const host = createHost(sig, links, () => {});
 const joiner = new Joiner({ send: (m) => sig.send(m), dial: dialer.dial, device, linked: () => links.ids() });
+
+// Chat: nickname and history live in memory only (closing every tab ends the conversation).
+const myNick = makeNickname(Math.random);
+const history = new History();
+const session = new ChatSession({
+  myNick,
+  history,
+  channel: (peerId) => links.get(peerId)?.dc,
+  myId: () => myId,
+  now: () => Date.now(),
+  newId: () => crypto.randomUUID(),
+});
+const chatView = createChatView(app, { myNick, history, session, myId: () => myId });
+const refresh = () => {
+  session.update(joiner.view);
+  render(joiner.view);
+};
+history.onChange(() => render(joiner.view));
+session.onChange(() => render(joiner.view));
 
 sig.onMessage((m) => {
   switch (m.t) {
@@ -111,7 +134,7 @@ sig.onClose(() => {
 });
 links.onChange(() => {
   joiner.onLinksChanged();
-  render(joiner.view);
+  refresh();
 });
-joiner.onChange((v) => render(v));
-render(joiner.view);
+joiner.onChange(() => refresh());
+refresh();
