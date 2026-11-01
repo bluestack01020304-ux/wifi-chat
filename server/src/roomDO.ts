@@ -4,12 +4,15 @@ import { type Outgoing, type PeerRecord, RoomState } from "./room";
 import { parseRoomParams } from "./roomKey";
 
 export const MAX_PEERS = 32;
+/** How often succession timeouts are checked while any host exists. */
+export const TICK_MS = 1000;
 
 /**
  * One Durable Object per room key. Uses the WebSocket Hibernation API and
  * keeps no room state in instance fields: every event rebuilds RoomState
  * from the per-socket attachments, so a hibernated object wakes up intact.
- * Nothing is written to storage, and IPs never reach this object.
+ * No room state is written to storage, and IPs never reach this object; the
+ * only stored thing is the alarm that drives succession while a host exists.
  */
 export class Room extends DurableObject {
   async fetch(request: Request): Promise<Response> {
@@ -40,6 +43,12 @@ export class Room extends DurableObject {
     this.apply((state) => state.handle(peerId, msg, Date.now()));
   }
 
+  /** Runs host timeouts and confirm windows, then keeps ticking while a host exists. */
+  async alarm(): Promise<void> {
+    const hasHost = this.apply((state) => state.tick(Date.now()), undefined, undefined, false);
+    if (hasHost) await this.ctx.storage.setAlarm(Date.now() + TICK_MS);
+  }
+
   async webSocketClose(ws: WebSocket, code: number): Promise<void> {
     this.drop(ws, code === 1005 || code === 1006 ? 1000 : code);
   }
@@ -54,7 +63,7 @@ export class Room extends DurableObject {
     // Tombstone first: a CLOSING socket can stay in getWebSockets(), and its
     // stale record must never be rebuilt into the room.
     ws.serializeAttachment(null);
-    this.apply((state) => state.leave(gone.peerId), undefined, gone);
+    this.apply((state) => state.leave(gone.peerId, Date.now()), undefined, gone);
     try {
       ws.close(code, "closed");
     } catch {
@@ -70,7 +79,7 @@ export class Room extends DurableObject {
    * that socket from getWebSockets(), so its record is added here for leave()
    * to see; nothing is sent to it.
    */
-  private apply(event: (state: RoomState) => Outgoing[], fresh?: string, gone?: PeerRecord): void {
+  private apply(event: (state: RoomState) => Outgoing[], fresh?: string, gone?: PeerRecord, schedule = true): boolean {
     const sockets = new Map<string, WebSocket>();
     const records: PeerRecord[] = [];
     for (const ws of this.ctx.getWebSockets()) {
@@ -89,6 +98,13 @@ export class Room extends DurableObject {
       const ws = sockets.get(to);
       if (ws) safeSend(ws, msg);
     }
+    const hasHost = state.hasHost();
+    if (hasHost && schedule) void this.ensureAlarm();
+    return hasHost;
+  }
+
+  private async ensureAlarm(): Promise<void> {
+    if ((await this.ctx.storage.getAlarm()) === null) await this.ctx.storage.setAlarm(Date.now() + TICK_MS);
   }
 }
 

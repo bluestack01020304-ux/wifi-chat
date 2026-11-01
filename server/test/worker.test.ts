@@ -1,6 +1,7 @@
-import { env, runInDurableObject, SELF } from "cloudflare:test";
+import { env, runDurableObjectAlarm, runInDurableObject, SELF } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
 import type { RoomSnapshot, ServerMessage } from "../src/protocol";
+import type { PeerRecord } from "../src/room";
 import type { Room } from "../src/roomDO";
 import { roomKeyString } from "../src/roomKey";
 
@@ -213,5 +214,50 @@ describe("dropped sockets", () => {
     if (welcome.t !== "welcome") return;
     expect(peerIds(welcome.room)).toEqual([welcome.peerId]);
     expect(host(welcome.room)).toBe(welcome.peerId);
+  });
+});
+
+describe("succession alarm", () => {
+  const stubFor = (room: string) =>
+    env.ROOMS.get(env.ROOMS.idFromName(roomKeyString("203.0.113.5", { room, mode: "family", key: null, device: "mobile" })));
+
+  it("a joined host schedules an alarm", async () => {
+    const room = freshRoom();
+    await (await connect("203.0.113.5", `?room=${room}`)).nextOf("welcome");
+    await settle();
+    const alarm = await runInDurableObject(stubFor(room), (_i: Room, state) => state.storage.getAlarm());
+    expect(alarm).not.toBeNull();
+  });
+
+  it("alarm runs succession for a silent host", async () => {
+    const room = freshRoom();
+    const a = await connect("203.0.113.5", `?room=${room}`);
+    const aw = await a.nextOf("welcome");
+    const b = await connect("203.0.113.5", `?room=${room}`);
+    const bw = await b.nextOf("welcome");
+    b.send({ t: "joined", groupId: aw.room.groups[0].groupId });
+    await b.nextOf("room");
+    // Make the host's last heartbeat old, as if it went silent 3 s ago.
+    await runInDurableObject(stubFor(room), (_i: Room, state) => {
+      for (const ws of state.getWebSockets()) {
+        const r = ws.deserializeAttachment() as PeerRecord;
+        if (r.peerId === aw.peerId) ws.serializeAttachment({ ...r, lastBeat: Date.now() - 3000 });
+      }
+    });
+    expect(await runDurableObjectAlarm(stubFor(room))).toBe(true);
+    const after = (await b.nextOf("room")).room;
+    expect(after.groups).toEqual([{ groupId: aw.room.groups[0].groupId, hostId: bw.peerId, term: 2, members: [] }]);
+    expect(after.peers.find((p) => p.peerId === aw.peerId)).toMatchObject({ status: "joining" });
+  });
+
+  it("alarm stops when no host remains", async () => {
+    const room = freshRoom();
+    const a = await connect("203.0.113.5", `?room=${room}`);
+    await a.nextOf("welcome");
+    a.ws.close(1000, "bye");
+    await settle();
+    await runDurableObjectAlarm(stubFor(room));
+    const alarm = await runInDurableObject(stubFor(room), (_i: Room, state) => state.storage.getAlarm());
+    expect(alarm).toBeNull();
   });
 });
