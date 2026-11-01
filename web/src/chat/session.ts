@@ -1,4 +1,3 @@
-import type { Mode } from "../../../server/src/roomKey";
 import type { View } from "../joiner";
 import type { History } from "./history";
 import { HostHub } from "./hostHub";
@@ -14,7 +13,7 @@ export interface ChannelLike {
 
 export interface ChatSessionDeps {
   myNick: string;
-  mode: Mode;
+  anonymous: boolean;
   history: History;
   channel(peerId: string): ChannelLike | undefined;
   myId(): string;
@@ -36,12 +35,12 @@ export class ChatSession {
   private attached = new Map<string, ChannelLike>();
   private member: { chat: MemberChat; hostId: string; term: number; channel: ChannelLike } | null = null;
   private listeners: (() => void)[] = [];
-  /** The last roster my host sent me, to seed my names if I take the group over. */
+  /** The last roster I saw (from my host, or my own hub), to seed the names of my next hub. */
   private lastRoster: RosterEntry[] = [];
 
   constructor(private deps: ChatSessionDeps) {}
 
-  /** A re-rolled nickname (family): the host renames me, or I rename myself as host. */
+  /** A re-rolled nickname (nickname rooms): the host renames me, or I rename myself as host. */
   setNick(nick: string): void {
     this.deps.myNick = nick;
     this.hub?.setMyNick(nick);
@@ -91,7 +90,7 @@ export class ChatSession {
         myNick: this.deps.myNick,
         history: this.deps.history,
         term,
-        mode: this.deps.mode,
+        anonymous: this.deps.anonymous,
         seed: this.lastRoster,
         now: this.deps.now,
         newId: this.deps.newId,
@@ -100,7 +99,10 @@ export class ChatSession {
           if (this.hub === hub && isOpen(ch)) ch.send(frame);
         },
       });
-      hub.onRoster(() => this.changed());
+      hub.onRoster(() => {
+        this.lastRoster = hub.roster();
+        this.changed();
+      });
       this.hub = hub;
       this.hubTerm = term;
       this.changed();
@@ -142,7 +144,7 @@ export class ChatSession {
       myNick: this.deps.myNick,
       history: this.deps.history,
       term,
-      mode: this.deps.mode,
+      anonymous: this.deps.anonymous,
       newId: this.deps.newId,
       send: (frame) => {
         if (this.member?.chat === chat && isOpen(ch)) ch.send(frame);

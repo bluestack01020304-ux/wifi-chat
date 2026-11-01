@@ -5,10 +5,9 @@ import type { RosterEntry } from "../../src/chat/wire";
 
 const j = (v: unknown) => JSON.stringify(v);
 
-function setup(term = 1, mode: "family" | "meeting" = "family", seed?: RosterEntry[], myId = "h") {
-  const history = new History();
+function setup(term = 1, anonymous = false, seed?: RosterEntry[], myId = "h", history = new History()) {
   const out: [string, { t: string; [k: string]: unknown }][] = [];
-  const hub = new HostHub({ myId, myNick: "호스트 고양이", history, term, mode, seed, send: (to, frame) => out.push([to, JSON.parse(frame)]), now: () => Date.now() });
+  const hub = new HostHub({ myId, myNick: "호스트 고양이", history, term, anonymous, seed, send: (to, frame) => out.push([to, JSON.parse(frame)]), now: () => Date.now() });
   const join = (id: string, nick = "닉" + id) => {
     hub.attach(id);
     hub.onFrame(id, j({ t: "hello", nick }));
@@ -205,8 +204,8 @@ describe("HostHub naming", () => {
   });
   afterEach(() => vi.useRealTimers());
 
-  it("meeting roster and messages show only 익명 N", () => {
-    const { hub, join, out, said } = setup(1, "meeting");
+  it("anonymous roster and messages show only 익명 N", () => {
+    const { hub, join, out, said } = setup(1, true);
     join("a", "졸린 거북이");
     join("b", "배고픈 펭귄");
     expect(hub.roster().map((p) => p.nick)).toEqual(["익명 1", "익명 2", "익명 3"]);
@@ -219,7 +218,7 @@ describe("HostHub naming", () => {
   });
 
   it("numbers are not reused", () => {
-    const { hub, join } = setup(1, "meeting");
+    const { hub, join } = setup(1, true);
     join("a");
     join("b");
     hub.detach("b");
@@ -228,33 +227,33 @@ describe("HostHub naming", () => {
     expect(hub.roster().map((p) => p.nick)).toEqual(["익명 1", "익명 2", "익명 4"]);
   });
 
-  it("a meeting member keeps its number when it says hello again", () => {
-    const { hub, join } = setup(1, "meeting");
+  it("an anonymous member keeps its number when it says hello again", () => {
+    const { hub, join } = setup(1, true);
     join("a");
     hub.onFrame("a", JSON.stringify({ t: "hello", nick: "익명" }));
     expect(hub.roster().map((p) => p.nick)).toEqual(["익명 1", "익명 2"]);
   });
 
-  it("a new host keeps the names it last saw (meeting)", () => {
+  it("a new host keeps the names it last saw (anonymous)", () => {
     const seed: RosterEntry[] = [
       { peerId: "old", nick: "익명 1", host: true, away: false },
       { peerId: "me", nick: "익명 2", host: false, away: false },
       { peerId: "x", nick: "익명 3", host: false, away: false },
     ];
-    const { hub, join } = setup(2, "meeting", seed, "me");
+    const { hub, join } = setup(2, true, seed, "me");
     expect(hub.roster()).toEqual([{ peerId: "me", nick: "익명 2", host: true, away: false }]);
     join("new");
     join("x");
     expect(hub.roster().map((p) => p.nick)).toEqual(["익명 2", "익명 4", "익명 3"]);
   });
 
-  it("a new host keeps the names it last saw (family)", () => {
+  it("a new host keeps the names it last saw (nicknames)", () => {
     const seed: RosterEntry[] = [
       { peerId: "old", nick: "졸린 거북이", host: true, away: false },
       { peerId: "me", nick: "졸린 거북이 2", host: false, away: false },
       { peerId: "x", nick: "졸린 거북이 3", host: false, away: false },
     ];
-    const { hub, join } = setup(2, "family", seed, "me");
+    const { hub, join } = setup(2, false, seed, "me");
     expect(hub.roster()[0]).toMatchObject({ peerId: "me", nick: "졸린 거북이 2" });
     join("y", "졸린 거북이");
     join("x", "졸린 거북이");
@@ -270,9 +269,30 @@ describe("HostHub naming", () => {
     expect(said("roster").length).toBe(before + 1);
   });
 
-  it("re-roll is ignored in meeting mode", () => {
-    const { hub } = setup(1, "meeting");
+  it("re-roll is ignored when anonymous", () => {
+    const { hub } = setup(1, true);
     hub.setMyNick("배고픈 수달");
     expect(hub.roster()[0].nick).toBe("익명 1");
+  });
+});
+
+describe("HostHub anonymous numbers", () => {
+  it("never reuses a number already in the history", () => {
+    vi.useFakeTimers();
+    try {
+      const history = new History();
+      const msg = (id: string, nick: string, at: number) => ({ id, from: "p" + id, nick, text: id, at });
+      history.add(msg("a", "익명 1", 1));
+      history.add(msg("b", "익명 4", 2));
+      const { hub, join } = setup(3, true, [], "me", history);
+      expect(hub.roster()[0].nick).not.toBe("익명 1");
+      expect(hub.roster()[0].nick).not.toBe("익명 4");
+      join("x");
+      const names = hub.roster().map((p) => p.nick);
+      expect(new Set(names).size).toBe(names.length);
+      for (const n of names) expect(["익명 1", "익명 4"]).not.toContain(n);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

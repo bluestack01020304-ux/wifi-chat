@@ -61,7 +61,7 @@ function boot(room: RoomInfo): void {
   const history = new History();
   const session = new ChatSession({
     myNick,
-    mode: room.mode,
+    anonymous: room.anon,
     history,
     channel: (peerId) => links.get(peerId)?.dc,
     myId: () => myId,

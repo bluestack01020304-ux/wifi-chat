@@ -71,7 +71,7 @@ describe("http surface", () => {
   });
 
   it("rejects bad requests", async () => {
-    expect((await upgrade("?mode=meeting", "203.0.113.5")).status).toBe(400);
+    expect((await upgrade("?key=short", "203.0.113.5")).status).toBe(400);
     expect((await upgrade("", null)).status).toBe(400);
     expect((await upgrade("", "garbage")).status).toBe(400);
     expect((await SELF.fetch("https://signal.test/ws", { headers: { "CF-Connecting-IP": "203.0.113.5" } })).status).toBe(426);
@@ -108,12 +108,12 @@ describe("rooms", () => {
     expect(peerIds(dw.room)).toEqual([dw.peerId]);
   });
 
-  it("meeting key isolates", async () => {
+  it("a link key isolates", async () => {
     const room = freshRoom();
     const k1 = "A".repeat(22);
     const k2 = "B".repeat(22);
-    await (await connect("203.0.113.5", `?room=${room}&mode=meeting&key=${k1}`)).nextOf("welcome");
-    const w = await (await connect("203.0.113.5", `?room=${room}&mode=meeting&key=${k2}`)).nextOf("welcome");
+    await (await connect("203.0.113.5", `?room=${room}&key=${k1}`)).nextOf("welcome");
+    const w = await (await connect("203.0.113.5", `?room=${room}&key=${k2}`)).nextOf("welcome");
     expect(peerIds(w.room)).toEqual([w.peerId]);
   });
 
@@ -198,7 +198,7 @@ describe("dropped sockets", () => {
     const a = await connect("203.0.113.5", `?room=${room}`);
     await a.nextOf("welcome");
     const stub = env.ROOMS.get(
-      env.ROOMS.idFromName(roomKeyString("203.0.113.5", { room, mode: "family", key: null, device: "mobile" })),
+      env.ROOMS.idFromName(roomKeyString("203.0.113.5", { room, key: null, anon: false, device: "mobile" })),
     );
     const welcome = await runInDurableObject(stub, async (instance: Room, state) => {
       const [hostSocket] = state.getWebSockets();
@@ -219,7 +219,7 @@ describe("dropped sockets", () => {
 
 describe("succession alarm", () => {
   const stubFor = (room: string) =>
-    env.ROOMS.get(env.ROOMS.idFromName(roomKeyString("203.0.113.5", { room, mode: "family", key: null, device: "mobile" })));
+    env.ROOMS.get(env.ROOMS.idFromName(roomKeyString("203.0.113.5", { room, key: null, anon: false, device: "mobile" })));
 
   it("an alarm is scheduled only once a host has somebody to hand over to", async () => {
     const room = freshRoom();

@@ -29,11 +29,11 @@ describe("parseRoomParams", () => {
   const p = (q: string) => parseRoomParams(new URL("https://x/ws" + q));
 
   it("applies defaults", () => {
-    expect(p("")).toEqual({ room: "기본", mode: "family", key: null, device: "mobile" });
+    expect(p("")).toEqual({ room: "기본", key: null, anon: false, device: "mobile" });
   });
   it("trims room and reads device", () => {
     expect(p("?room=%20%EA%B1%B0%EC%8B%A4%20&device=desktop")).toEqual({
-      room: "거실", mode: "family", key: null, device: "desktop",
+      room: "거실", key: null, anon: false, device: "desktop",
     });
   });
   it("blank room falls back to default", () => {
@@ -42,19 +42,24 @@ describe("parseRoomParams", () => {
   it("NFC-normalizes room names", () => {
     expect(p("?room=" + encodeURIComponent("거실".normalize("NFD")))).toMatchObject({ room: "거실" });
   });
-  it("family mode ignores key", () => {
-    expect(p("?mode=family&key=AAAAAAAAAAAAAAAAAAAAAA")).toMatchObject({ key: null });
+  it("mode is no longer read", () => {
+    expect(p("?mode=party")).toMatchObject({ key: null, anon: false });
   });
-  it("meeting mode requires a valid key", () => {
-    expect(p("?mode=meeting&key=AAAAAAAAAAAAAAAAAAAAAA")).toMatchObject({
-      mode: "meeting", key: "AAAAAAAAAAAAAAAAAAAAAA",
+  it("a key makes the room link-only and must be valid", () => {
+    expect(p("?key=AAAAAAAAAAAAAAAAAAAAAA")).toMatchObject({
+      key: "AAAAAAAAAAAAAAAAAAAAAA",
     });
-    expect(p("?mode=meeting")).toHaveProperty("error");
-    expect(p("?mode=meeting&key=short")).toHaveProperty("error");
-    expect(p("?mode=meeting&key=AAAAAAAAAAAAAAAAAAAAA%2B")).toHaveProperty("error");
+    expect(p("?key=")).toHaveProperty("error");
+    expect(p("?key=short")).toHaveProperty("error");
+    expect(p("?key=AAAAAAAAAAAAAAAAAAAAA%2B")).toHaveProperty("error");
   });
-  it("rejects unknown mode and device", () => {
-    expect(p("?mode=party")).toHaveProperty("error");
+
+  it("anon=1 is anonymous, anything else is an error", () => {
+    expect(p("?anon=1")).toMatchObject({ anon: true });
+    expect(p("?anon=0")).toHaveProperty("error");
+    expect(p("?anon=yes")).toHaveProperty("error");
+  });
+  it("rejects an unknown device", () => {
     expect(p("?device=tv")).toHaveProperty("error");
   });
   it("limits room name to 40 code points", () => {
@@ -64,7 +69,7 @@ describe("parseRoomParams", () => {
 });
 
 describe("roomKeyString", () => {
-  const base = { room: "거실", mode: "family", key: null, device: "mobile" } as const;
+  const base = { room: "거실", key: null, anon: false, device: "mobile" } as const;
 
   it("cannot be forged by delimiters in the room name", () => {
     expect(roomKeyString("1.2.3.4", { ...base, room: "a|b" })).not.toBe(
@@ -74,10 +79,11 @@ describe("roomKeyString", () => {
   it("does not depend on device", () => {
     expect(roomKeyString("1.2.3.4", { ...base, device: "desktop" })).toBe(roomKeyString("1.2.3.4", base));
   });
-  it("differs by network, room, mode and key", () => {
+  it("differs by network, room, key and anon", () => {
     const k = roomKeyString("1.2.3.4", base);
     expect(roomKeyString("1.2.3.5", base)).not.toBe(k);
     expect(roomKeyString("1.2.3.4", { ...base, room: "부엌" })).not.toBe(k);
-    expect(roomKeyString("1.2.3.4", { ...base, mode: "meeting", key: "AAAAAAAAAAAAAAAAAAAAAA" })).not.toBe(k);
+    expect(roomKeyString("1.2.3.4", { ...base, key: "AAAAAAAAAAAAAAAAAAAAAA" })).not.toBe(k);
+    expect(roomKeyString("1.2.3.4", { ...base, anon: true })).not.toBe(k);
   });
 });

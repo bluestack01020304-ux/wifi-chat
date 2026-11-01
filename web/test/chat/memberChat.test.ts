@@ -5,11 +5,11 @@ import { HELLO_RETRY_MS, MemberChat } from "../../src/chat/memberChat";
 const j = (v: unknown) => JSON.stringify(v);
 const msg = (id: string, at: number) => ({ id, from: "h", nick: "n", text: id, at });
 
-function setup(term = 1, mode: "family" | "meeting" = "family") {
+function setup(term = 1, anonymous = false) {
   const history = new History();
   const sent: unknown[] = [];
   let n = 0;
-  const chat = new MemberChat({ myNick: "졸린 펭귄", history, term, mode, send: (f) => sent.push(JSON.parse(f)), newId: () => "id" + ++n });
+  const chat = new MemberChat({ myNick: "졸린 펭귄", history, term, anonymous, send: (f) => sent.push(JSON.parse(f)), newId: () => "id" + ++n });
   return { chat, history, sent };
 }
 
@@ -87,8 +87,8 @@ describe("MemberChat term", () => {
 });
 
 describe("MemberChat naming", () => {
-  it("meeting hello carries no nickname", () => {
-    const { chat, sent } = setup(1, "meeting");
+  it("an anonymous hello carries no nickname", () => {
+    const { chat, sent } = setup(1, true);
     chat.open();
     chat.close();
     expect(sent).toEqual([{ t: "hello", nick: "익명" }]);
@@ -103,8 +103,8 @@ describe("MemberChat naming", () => {
     expect(sent).toEqual([{ t: "hello", nick: "졸린 펭귄" }, { t: "hello", nick: "배고픈 수달" }]);
   });
 
-  it("re-roll sends nothing in meeting mode", () => {
-    const { chat, sent } = setup(1, "meeting");
+  it("re-roll sends nothing when anonymous", () => {
+    const { chat, sent } = setup(1, true);
     chat.setNick("배고픈 수달");
     expect(sent).toEqual([]);
   });

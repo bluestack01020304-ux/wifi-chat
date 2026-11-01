@@ -8,10 +8,10 @@ describe("signalUrl", () => {
     );
   });
 
-  it("honours ?signal= and forwards only room, mode and key", () => {
+  it("honours ?signal= and forwards only room, key and anon", () => {
     const key = "A".repeat(22);
-    expect(signalUrl(new URL(`https://p.dev/?signal=ws://localhost:8787/ws&mode=meeting&key=${key}&junk=1`), "desktop")).toBe(
-      `ws://localhost:8787/ws?mode=meeting&key=${key}&device=desktop`,
+    expect(signalUrl(new URL(`https://p.dev/?signal=ws://localhost:8787/ws&mode=meeting&key=${key}&anon=1&junk=1`), "desktop")).toBe(
+      `ws://localhost:8787/ws?key=${key}&anon=1&device=desktop`,
     );
   });
 

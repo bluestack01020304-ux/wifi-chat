@@ -28,7 +28,7 @@ function setup() {
   let n = 0;
   const s = new ChatSession({
     myNick: "나",
-    mode: "family",
+    anonymous: false,
     history,
     channel: (id) => channels.get(id),
     myId: () => "me",
@@ -153,7 +153,7 @@ describe("ChatSession", () => {
 describe("ChatSession term", () => {
   it("a new term for the same host replaces the member role", () => {
     const channels = new Map<string, FakeChannel>();
-    const s = new ChatSession({ myNick: "나", mode: "family", history: new History(), channel: (id) => channels.get(id), myId: () => "me", now: () => 1, newId: () => "x" });
+    const s = new ChatSession({ myNick: "나", anonymous: false, history: new History(), channel: (id) => channels.get(id), myId: () => "me", now: () => 1, newId: () => "x" });
     const h = new FakeChannel();
     channels.set("h", h);
     s.update({ kind: "member", groupId: "g", hostId: "h", term: 1 });
@@ -167,7 +167,7 @@ describe("ChatSession term", () => {
 
   it("a host whose term changes stamps the new term", () => {
     const channels = new Map<string, FakeChannel>();
-    const s = new ChatSession({ myNick: "나", mode: "family", history: new History(), channel: (id) => channels.get(id), myId: () => "me", now: () => 1, newId: () => "x" });
+    const s = new ChatSession({ myNick: "나", anonymous: false, history: new History(), channel: (id) => channels.get(id), myId: () => "me", now: () => 1, newId: () => "x" });
     const a = new FakeChannel();
     channels.set("a", a);
     s.update({ kind: "host", groupId: "g", members: ["a"], aloneInRoom: false, term: 1 });
@@ -180,7 +180,7 @@ describe("ChatSession term", () => {
 describe("ChatSession naming", () => {
   it("member to host seeds the hub with the last roster", () => {
     const channels = new Map<string, FakeChannel>();
-    const s = new ChatSession({ myNick: "나", mode: "meeting", history: new History(), channel: (id) => channels.get(id), myId: () => "me", now: () => 1, newId: () => "x" });
+    const s = new ChatSession({ myNick: "나", anonymous: true, history: new History(), channel: (id) => channels.get(id), myId: () => "me", now: () => 1, newId: () => "x" });
     const h = new FakeChannel();
     channels.set("h", h);
     s.update({ kind: "member", groupId: "g", hostId: "h", term: 1 });
@@ -203,9 +203,28 @@ describe("ChatSession naming", () => {
 
   it("setNick reaches the current role", () => {
     const channels = new Map<string, FakeChannel>();
-    const s = new ChatSession({ myNick: "나", mode: "family", history: new History(), channel: (id) => channels.get(id), myId: () => "me", now: () => 1, newId: () => "x" });
+    const s = new ChatSession({ myNick: "나", anonymous: false, history: new History(), channel: (id) => channels.get(id), myId: () => "me", now: () => 1, newId: () => "x" });
     s.update({ kind: "host", groupId: "g", members: [], aloneInRoom: true, term: 1 });
     s.setNick("새 이름");
     expect(s.roster()[0].nick).toBe("새 이름");
+  });
+});
+
+describe("ChatSession seeds from its own hub", () => {
+  it("a second hub is seeded with the names the first hub handed out", () => {
+    const channels = new Map<string, FakeChannel>();
+    const s = new ChatSession({ myNick: "나", anonymous: true, history: new History(), channel: (id) => channels.get(id), myId: () => "me", now: () => 1, newId: () => "x" });
+    const d = new FakeChannel();
+    channels.set("d", d);
+    s.update({ kind: "host", groupId: "g", members: ["d"], aloneInRoom: false, term: 1 });
+    d.say({ t: "hello", nick: "익명" });
+    expect(s.roster().map((p) => p.nick)).toEqual(["익명 1", "익명 2"]);
+    // My group changes under me (a merge into a new term); a newcomer must not get d's number.
+    s.update({ kind: "failed" });
+    const e = new FakeChannel();
+    channels.set("e", e);
+    s.update({ kind: "host", groupId: "g2", members: ["e"], aloneInRoom: false, term: 2 });
+    e.say({ t: "hello", nick: "익명" });
+    expect(s.roster().map((p) => p.nick)).toEqual(["익명 1", "익명 3"]);
   });
 });

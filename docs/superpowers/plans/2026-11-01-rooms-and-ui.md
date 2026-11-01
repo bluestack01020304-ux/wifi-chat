@@ -150,3 +150,16 @@ Layout (one column, max 32rem, 16 px side gutter, light and dark):
 - [ ] **Step 2:** Headless family and meeting checks on `https://wifi-chat.pages.dev`.
 - [ ] **Step 3:** With the user: laptop makes a meeting room link and QR; the phone scans the QR and lands in the same meeting room as `익명 N`; a phone on mobile data or without the key cannot join that room.
 - [ ] **Step 4:** Record results under "Rooms and UI Results (Next Steps 6)"; commit `Record rooms and UI check`.
+
+---
+
+## Addendum (2026-11-01, user decision after Task 4)
+
+"가족/회의" were only examples; the app is for any place. The single `mode` (family = open + nicknames, meeting = link-only + anonymous) becomes two independent choices:
+
+- **Who can join** — `key` present → only people with the link/QR (22-char base64url, as before); absent → anyone on the same Wi-Fi.
+- **How names show** — `anon=1` → everyone is `익명 N`; absent → nicknames.
+
+The server reads `room`, `key`, `anon` (and `device`); `mode` is no longer read. Room key = [network, room, key, anon], so the same link always means the same room. UI copy drops 가족/회의: the panel asks `들어올 수 있는 사람` (`같은 Wi-Fi 누구나` / `링크·QR 받은 사람만`) and `이름 표시` (`닉네임` / `익명`); header chips are `외부 전송 없음`, plus `링크로만` and/or `익명`; the link-only notice and the anonymity notices show independently.
+
+Review fixes folded in: `익명 N` numbers never reuse a number seen in history or the hub's own roster; the entry who-line and the composer keep focus across renders; the entry screen shows a closed socket.

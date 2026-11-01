@@ -1,4 +1,3 @@
-import type { Mode } from "../../../server/src/roomKey";
 import type { History } from "./history";
 import { type ChatMessage, historyFrame, MAX_NICK, parseToHost, type RosterEntry, type ToMember } from "./wire";
 
@@ -7,7 +6,7 @@ export const AWAY_MS = 30_000;
 export const SAY_LIMIT = 20;
 export const SAY_WINDOW_MS = 10_000;
 
-/** Spec 신뢰 모델: in a meeting room everyone is shown as "익명 N", fixed while they stay. */
+/** Spec 신뢰 모델: in an anonymous room everyone is shown as "익명 N", fixed while they stay. */
 export const anonName = (n: number) => `익명 ${n}`;
 const anonNumber = (nick: string) => Number(/^익명 (\d+)$/.exec(nick)?.[1] ?? 0);
 
@@ -26,8 +25,8 @@ export interface HostHubDeps {
   history: History;
   /** The group's current term, stamped on every frame. */
   term: number;
-  /** meeting: everyone is "익명 N" and hello nicknames are ignored. */
-  mode: Mode;
+  /** Everyone is "익명 N" and hello nicknames are ignored. */
+  anonymous: boolean;
   /** The last roster I saw as a member: names carry over when I take the group over. */
   seed?: RosterEntry[];
   send(peerId: string, frame: string): void;
@@ -55,17 +54,20 @@ export class HostHub {
     const mine = seed.find((p) => p.peerId === deps.myId)?.nick;
     // The previous host is gone (or rejoins under a fresh name), so its name is not reserved.
     for (const p of seed) if (p.peerId !== deps.myId && !p.host) this.seeded.set(p.peerId, p.nick);
-    if (deps.mode === "meeting") {
-      this.myName = mine && anonNumber(mine) > 0 ? mine : anonName(1);
-      this.nextAnon = Math.max(anonNumber(this.myName), ...seed.map((p) => anonNumber(p.nick))) + 1;
+    if (deps.anonymous) {
+      // A number already on screen (roster or history) belongs to someone: never hand it out again.
+      const used = [...seed.map((p) => p.nick), ...deps.history.list().map((m) => m.nick)].map(anonNumber);
+      let next = Math.max(0, ...used) + 1;
+      this.myName = mine && anonNumber(mine) > 0 ? mine : anonName(next++);
+      this.nextAnon = Math.max(next, anonNumber(this.myName) + 1);
     } else {
       this.myName = mine ?? deps.myNick;
     }
   }
 
-  /** A new nickname for me (family only). */
+  /** A new nickname for me (nickname rooms only). */
   setMyNick(nick: string): void {
-    if (this.closed || this.deps.mode === "meeting") return;
+    if (this.closed || this.deps.anonymous) return;
     this.myName = this.uniqueNick(this.deps.myId, nick);
     this.rosterChanged();
   }
@@ -110,7 +112,7 @@ export class HostHub {
     if (!this.allow(m)) return;
     if (frame.t === "hello") {
       let changed = false;
-      if (this.deps.mode === "meeting") {
+      if (this.deps.anonymous) {
         if (m.nick === null) {
           m.nick = this.claimSeed(peerId) ?? anonName(this.nextAnon++);
           changed = true;

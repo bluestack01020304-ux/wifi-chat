@@ -1,4 +1,3 @@
-import type { Mode } from "../../../server/src/roomKey";
 import type { History } from "./history";
 import { cleanText, MAX_TEXT, parseToMember, type RosterEntry, type ToHost } from "./wire";
 
@@ -14,8 +13,8 @@ export interface MemberChatDeps {
   history: History;
   /** My host's current term; frames stamped with any other term are dropped. */
   term: number;
-  /** meeting: my hello carries no nickname. */
-  mode: Mode;
+  /** Anonymous room: my hello carries no nickname. */
+  anonymous: boolean;
   send(frame: string): void;
   newId(): string;
 }
@@ -31,16 +30,16 @@ export class MemberChat {
 
   constructor(private deps: MemberChatDeps) {}
 
-  /** A new nickname (family only): tell the host again. */
+  /** A new nickname (nickname rooms only): tell the host again. */
   setNick(nick: string): void {
-    if (this.deps.mode === "meeting") return;
+    if (this.deps.anonymous) return;
     this.deps.myNick = nick;
     this.sendFrame({ t: "hello", nick });
   }
 
   open(): void {
-    // Meeting rooms are anonymous even toward the host: it numbers me itself.
-    const hello = () => this.sendFrame({ t: "hello", nick: this.deps.mode === "meeting" ? "익명" : this.deps.myNick });
+    // Anonymous rooms are anonymous even toward the host: it numbers me itself.
+    const hello = () => this.sendFrame({ t: "hello", nick: this.deps.anonymous ? "익명" : this.deps.myNick });
     hello();
     this.close();
     this.helloTimer = setInterval(hello, HELLO_RETRY_MS);

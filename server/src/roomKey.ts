@@ -1,16 +1,20 @@
-export type Mode = "family" | "meeting";
 export type Device = "desktop" | "mobile";
 
+/**
+ * A room is two independent choices on top of its name:
+ * `key` — only people with the link (an unguessable token) can join; null = anyone on the same network.
+ * `anon` — everyone is shown as "익명 N" instead of a nickname.
+ */
 export type RoomParams = {
   room: string;
-  mode: Mode;
   key: string | null;
+  anon: boolean;
   device: Device;
 };
 
 const DEFAULT_ROOM = "기본";
 const MAX_ROOM_CODE_POINTS = 40;
-const MEETING_KEY = /^[A-Za-z0-9_-]{22}$/;
+const LINK_KEY = /^[A-Za-z0-9_-]{22}$/;
 
 function parseIPv4(s: string): string | null {
   const parts = s.split(".");
@@ -59,22 +63,19 @@ export function parseRoomParams(url: URL): RoomParams | { error: string } {
     return { error: `room name is longer than ${MAX_ROOM_CODE_POINTS} characters` };
   }
 
-  const mode = q.get("mode") ?? "family";
-  if (mode !== "family" && mode !== "meeting") return { error: "mode must be family or meeting" };
-
   const device = q.get("device") ?? "mobile";
   if (device !== "desktop" && device !== "mobile") return { error: "device must be desktop or mobile" };
 
-  let key: string | null = null;
-  if (mode === "meeting") {
-    key = q.get("key");
-    if (key === null || !MEETING_KEY.test(key)) return { error: "meeting mode needs a valid key" };
-  }
+  const key = q.get("key");
+  if (key !== null && !LINK_KEY.test(key)) return { error: "key must be 22 base64url characters" };
 
-  return { room, mode, key, device };
+  const anonParam = q.get("anon");
+  if (anonParam !== null && anonParam !== "1") return { error: "anon must be 1" };
+
+  return { room, key, anon: anonParam === "1", device };
 }
 
 /** JSON, not a delimiter, so no room name can collide with another key. */
 export function roomKeyString(netId: string, p: RoomParams): string {
-  return JSON.stringify([netId, p.mode, p.room, p.key]);
+  return JSON.stringify([netId, p.room, p.key, p.anon]);
 }

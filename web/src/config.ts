@@ -1,9 +1,9 @@
 import type { Device } from "../../server/src/roomKey";
 
 export const DEFAULT_SIGNAL_URL = "wss://wifi-chat-signal.wifi-chat-signal.workers.dev/ws";
-const FORWARDED = ["room", "mode", "key"] as const;
+const FORWARDED = ["room", "key", "anon"] as const;
 
-/** The signaling socket URL for this page: `?signal=` override, page room/mode/key forwarded, device added. */
+/** The signaling socket URL for this page: `?signal=` override, page room/key/anon forwarded, device added. */
 export function signalUrl(page: URL, device: Device): string {
   const url = new URL(page.searchParams.get("signal") ?? DEFAULT_SIGNAL_URL);
   url.search = "";
